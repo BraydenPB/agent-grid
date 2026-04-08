@@ -55,6 +55,7 @@ export function TerminalGrid() {
   const localDockviewApiRef = useRef<any>(null);
   const previousPanesRef = useRef<string[]>([]);
   const previousLayoutVersionRef = useRef(layoutVersion);
+  const programmaticChangeRef = useRef(false);
 
   const handleReady = useCallback(
     (event: DockviewReadyEvent) => {
@@ -119,6 +120,24 @@ export function TerminalGrid() {
     [workspace.panes, profiles, layoutVersion],
   );
 
+  // Clear activePreset when user manually rearranges panels in Dockview
+  useEffect(() => {
+    const api = localDockviewApiRef.current;
+    if (!api) return;
+
+    const disposable = api.onDidLayoutChange(() => {
+      if (programmaticChangeRef.current) return;
+      const { activePreset } = useWorkspaceStore.getState();
+      if (activePreset) {
+        useWorkspaceStore.setState({ activePreset: null });
+      }
+    });
+
+    return () => {
+      disposable.dispose();
+    };
+  }, []);
+
   // Detect preset/layout change and rearrange via Dockview API
   useEffect(() => {
     const api = localDockviewApiRef.current;
@@ -126,6 +145,7 @@ export function TerminalGrid() {
 
     if (layoutVersion !== previousLayoutVersionRef.current) {
       previousLayoutVersionRef.current = layoutVersion;
+      programmaticChangeRef.current = true;
 
       // Layout version bumped (preset applied) — rearrange without full remount.
       // Remove all existing panels from Dockview, then re-add with new positions.
@@ -186,11 +206,19 @@ export function TerminalGrid() {
       });
 
       previousPanesRef.current = workspace.panes.map((p) => p.id);
+      requestAnimationFrame(() => {
+        programmaticChangeRef.current = false;
+      });
       return;
     }
 
     // Normal incremental sync — add/remove individual panes
     const currentPaneIds = workspace.panes.map((p) => p.id);
+    const hasChanges =
+      currentPaneIds.length !== previousPanesRef.current.length ||
+      currentPaneIds.some((id, i) => id !== previousPanesRef.current[i]);
+
+    if (hasChanges) programmaticChangeRef.current = true;
 
     // Remove panels that no longer exist in store
     const removedPaneIds = previousPanesRef.current.filter(
@@ -278,6 +306,11 @@ export function TerminalGrid() {
     });
 
     previousPanesRef.current = currentPaneIds;
+    if (hasChanges) {
+      requestAnimationFrame(() => {
+        programmaticChangeRef.current = false;
+      });
+    }
   }, [workspace.panes, profiles, layoutVersion]);
 
   // Handle maximize/restore via Dockview API

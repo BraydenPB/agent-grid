@@ -93,24 +93,27 @@ export function ProjectBrowser({
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const fetchProjects = useCallback(async () => {
+  useEffect(() => {
+    if (!projectsPath) return;
+    let ignore = false;
+
     setLoading(true);
     setError(null);
-    try {
-      const result = await invoke<ProjectInfo[]>('list_projects', {
-        dir: projectsPath,
+    invoke<ProjectInfo[]>('list_projects', { dir: projectsPath })
+      .then((result) => {
+        if (!ignore) setProjects(result);
+      })
+      .catch((e) => {
+        if (!ignore) setError(String(e));
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
       });
-      setProjects(result);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [projectsPath]);
 
-  useEffect(() => {
-    if (projectsPath) void fetchProjects();
-  }, [projectsPath, fetchProjects]);
+    return () => {
+      ignore = true;
+    };
+  }, [projectsPath]);
 
   useEffect(() => {
     const timer = setTimeout(() => searchRef.current?.focus(), 100);
@@ -126,6 +129,49 @@ export function ProjectBrowser({
   useEffect(() => {
     setSelectedIndex(0);
   }, [search]);
+
+  const isChangeDirMode = overlay && !!changeDirPaneId;
+
+  const handleLaunch = useCallback(
+    (project: ProjectInfo, profile: TerminalProfile) => {
+      if (changeDirPaneId && isChangeDirMode) {
+        setPendingCwd(changeDirPaneId, project.path);
+        setChangeDirPaneId(null);
+        onClose?.();
+        return;
+      }
+      addPaneWithCwd(profile.id, project.path);
+      if (overlay) onClose?.();
+      else setShowProjectBrowser(false);
+    },
+    [
+      changeDirPaneId,
+      isChangeDirMode,
+      setPendingCwd,
+      setChangeDirPaneId,
+      onClose,
+      addPaneWithCwd,
+      overlay,
+      setShowProjectBrowser,
+    ],
+  );
+
+  const handleSelectDirectory = useCallback(
+    (project: ProjectInfo) => {
+      if (changeDirPaneId && isChangeDirMode) {
+        setPendingCwd(changeDirPaneId, project.path);
+        setChangeDirPaneId(null);
+        onClose?.();
+      }
+    },
+    [
+      changeDirPaneId,
+      isChangeDirMode,
+      setPendingCwd,
+      setChangeDirPaneId,
+      onClose,
+    ],
+  );
 
   // Overlay dismiss
   useEffect(() => {
@@ -162,7 +208,16 @@ export function ProjectBrowser({
     }
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [overlay, onClose, filtered, selectedIndex, profiles]);
+  }, [
+    overlay,
+    onClose,
+    filtered,
+    selectedIndex,
+    profiles,
+    isChangeDirMode,
+    handleSelectDirectory,
+    handleLaunch,
+  ]);
 
   // Scroll into view
   useEffect(() => {
@@ -173,28 +228,6 @@ export function ProjectBrowser({
       behavior: 'smooth',
     });
   }, [selectedIndex]);
-
-  const isChangeDirMode = overlay && !!changeDirPaneId;
-
-  const handleLaunch = (project: ProjectInfo, profile: TerminalProfile) => {
-    if (changeDirPaneId && isChangeDirMode) {
-      setPendingCwd(changeDirPaneId, project.path);
-      setChangeDirPaneId(null);
-      onClose?.();
-      return;
-    }
-    addPaneWithCwd(profile.id, project.path);
-    if (overlay) onClose?.();
-    else setShowProjectBrowser(false);
-  };
-
-  const handleSelectDirectory = (project: ProjectInfo) => {
-    if (changeDirPaneId && isChangeDirMode) {
-      setPendingCwd(changeDirPaneId, project.path);
-      setChangeDirPaneId(null);
-      onClose?.();
-    }
-  };
 
   const dirName = projectsPath.split(/[\\/]/).pop() || 'Projects';
 
