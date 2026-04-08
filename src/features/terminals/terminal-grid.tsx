@@ -1,5 +1,10 @@
 import { useCallback, useRef, useEffect, useMemo } from 'react';
-import { DockviewReact, type DockviewReadyEvent } from 'dockview';
+import {
+  DockviewReact,
+  type DockviewReadyEvent,
+  type DockviewApi,
+  type IDockviewPanelProps,
+} from 'dockview';
 import { AnimatePresence } from 'framer-motion';
 import 'dockview/dist/styles/dockview.css';
 import { useWorkspaceStore } from '@/store/workspace-store';
@@ -52,7 +57,7 @@ export function TerminalGrid() {
     maximizedPaneId,
   } = useWorkspaceStore();
 
-  const localDockviewApiRef = useRef<any>(null);
+  const localDockviewApiRef = useRef<DockviewApi | null>(null);
   const previousPanesRef = useRef<string[]>([]);
   const previousLayoutVersionRef = useRef(layoutVersion);
   const programmaticChangeRef = useRef(false);
@@ -372,7 +377,13 @@ export function TerminalGrid() {
   // Stable component reference — TerminalPane subscribes to store for isActive
   const components = useMemo(
     () => ({
-      terminal: (props: any) => (
+      terminal: (
+        props: IDockviewPanelProps<{
+          paneId: string;
+          profile: TerminalProfile;
+          cwd?: string;
+        }>,
+      ) => (
         <TerminalPaneWrapper
           paneId={props.params.paneId}
           profile={props.params.profile}
