@@ -45,7 +45,6 @@ export function TerminalGrid() {
   const {
     workspace,
     profiles,
-    removePane,
     layoutVersion,
     showProjectBrowser,
     setShowProjectBrowser,
@@ -333,12 +332,9 @@ export function TerminalGrid() {
     return () => clearTimeout(timer);
   }, [workspace.panes, maximizedPaneId]);
 
-  const handlePanelClose = useCallback(
-    (panelId: string) => {
-      removePane(panelId);
-    },
-    [removePane],
-  );
+  const handlePanelClose = useCallback((panelId: string) => {
+    useWorkspaceStore.getState().removePane(panelId);
+  }, []);
 
   // Stable component reference — TerminalPane subscribes to store for isActive
   const components = useMemo(

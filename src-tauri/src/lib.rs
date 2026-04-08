@@ -140,5 +140,5 @@ pub fn run() {
         .plugin(tauri_plugin_pty::init())
         .invoke_handler(tauri::generate_handler![list_projects])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| eprintln!("Failed to run Tauri application: {}", e));
 }

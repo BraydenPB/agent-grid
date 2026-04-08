@@ -16,7 +16,11 @@ export class ErrorBoundary extends Component<Props, State> {
     return { error };
   }
 
-  handleReset = () => {
+  handleRetry = () => {
+    this.setState({ error: null });
+  };
+
+  handleResetLayout = () => {
     clearSavedLayout();
     this.setState({ error: null });
     window.location.reload();
@@ -57,21 +61,36 @@ export class ErrorBoundary extends Component<Props, State> {
             {'\n\n'}
             {this.state.error.stack}
           </pre>
-          <button
-            onClick={this.handleReset}
-            style={{
-              alignSelf: 'flex-start',
-              padding: '8px 16px',
-              borderRadius: 6,
-              border: '1px solid rgba(59,130,246,0.3)',
-              background: 'rgba(59,130,246,0.12)',
-              color: '#93c5fd',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
-            Reset layout &amp; reload
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={this.handleRetry}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 6,
+                border: '1px solid rgba(59,130,246,0.3)',
+                background: 'rgba(59,130,246,0.12)',
+                color: '#93c5fd',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+            <button
+              onClick={this.handleResetLayout}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 6,
+                border: '1px solid rgba(239,68,68,0.3)',
+                background: 'rgba(239,68,68,0.08)',
+                color: '#fca5a5',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              Reset layout &amp; reload
+            </button>
+          </div>
         </div>
       );
     }
