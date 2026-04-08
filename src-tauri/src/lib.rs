@@ -78,11 +78,17 @@ fn check_git_dirty(project_path: &Path) -> bool {
 #[tauri::command]
 fn list_projects(dir: String) -> Result<Vec<ProjectInfo>, String> {
     let dir_path = Path::new(&dir);
+
+    // Canonicalize to resolve symlinks and ".." traversal before reading
+    let dir_path = dir_path
+        .canonicalize()
+        .map_err(|e| format!("Invalid path '{}': {}", dir, e))?;
+
     if !dir_path.is_dir() {
-        return Err(format!("Not a directory: {}", dir));
+        return Err(format!("Not a directory: {}", dir_path.display()));
     }
 
-    let entries = fs::read_dir(dir_path).map_err(|e| e.to_string())?;
+    let entries = fs::read_dir(&dir_path).map_err(|e| e.to_string())?;
     let mut projects: Vec<ProjectInfo> = Vec::new();
 
     for entry in entries.flatten() {

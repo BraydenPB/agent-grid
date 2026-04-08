@@ -47,6 +47,16 @@ export const DEFAULT_PROFILES: TerminalProfile[] = [
   },
 ];
 
+/** Escape an argument for safe embedding in a bash -c string */
+function quoteBash(arg: string): string {
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
+/** Escape an argument for safe embedding in a PowerShell -Command string */
+function quotePowerShell(arg: string): string {
+  return "'" + arg.replace(/'/g, "''") + "'";
+}
+
 export function resolveShellCommand(
   profile: TerminalProfile,
   osPlatform: string,
@@ -61,13 +71,16 @@ export function resolveShellCommand(
 
   // Non-shell profiles: spawn through the system shell so that PATH
   // resolution, .cmd shims (Windows), and login-profile env vars all work.
-  const cmdWithArgs = [profile.command, ...profile.args].join(' ');
+  // Each argument is individually quoted to prevent shell metacharacter injection.
+  const parts = [profile.command, ...profile.args];
   if (osPlatform === 'windows') {
+    const cmdWithArgs = parts.map(quotePowerShell).join(' ');
     return {
       command: 'powershell.exe',
       args: ['-NoLogo', '-Command', cmdWithArgs],
     };
   }
+  const cmdWithArgs = parts.map(quoteBash).join(' ');
   return { command: '/bin/bash', args: ['-lc', cmdWithArgs] };
 }
 
