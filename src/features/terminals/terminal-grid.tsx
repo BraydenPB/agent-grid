@@ -1,137 +1,384 @@
-import { useMemo, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Responsive, WidthProvider } from "react-grid-layout";
-import "react-grid-layout/css/styles.css";
-import "react-resizable/css/styles.css";
-import { TerminalPane } from "./terminal-pane";
-import { useWorkspaceStore } from "@/store/workspace-store";
-import { Terminal, Plus } from "lucide-react";
+import { useCallback, useRef, useEffect, useMemo } from 'react';
+import { DockviewReact, type DockviewReadyEvent } from 'dockview';
+import { AnimatePresence } from 'framer-motion';
+import 'dockview/dist/styles/dockview.css';
+import { useWorkspaceStore } from '@/store/workspace-store';
+import { ProjectBrowser } from '@/features/projects/project-browser';
+import {
+  cleanupOrphanedEntries,
+  destroyTerminalEntry,
+} from '@/lib/terminal-registry';
+import { usePaneStatusStore } from '@/store/pane-status-store';
+import { saveLayout } from '@/lib/layout-storage';
+import { dockviewApiRef } from '@/lib/dockview-api';
+import type { TerminalProfile } from '@/types';
+import { TerminalPane } from './terminal-pane';
 
-const ResponsiveGridLayout = WidthProvider(Responsive);
+/** Thin wrapper that subscribes to the store for isActive — keeps Dockview components stable */
+function TerminalPaneWrapper({
+  paneId,
+  profile,
+  cwd,
+  onClose,
+}: {
+  paneId: string;
+  profile: TerminalProfile;
+  cwd?: string;
+  onClose: () => void;
+}) {
+  const isActive = useWorkspaceStore((s) => s.activePaneId === paneId);
+  const setActivePaneId = useWorkspaceStore((s) => s.setActivePaneId);
+
+  return (
+    <TerminalPane
+      paneId={paneId}
+      profile={profile}
+      initialCwd={cwd}
+      isActive={isActive}
+      onFocus={() => setActivePaneId(paneId)}
+      onClose={onClose}
+    />
+  );
+}
 
 export function TerminalGrid() {
-  const { workspace, profiles, activePaneId, setActivePaneId, removePane, updateWorkspaceLayouts, addPane } =
-    useWorkspaceStore();
+  const {
+    workspace,
+    profiles,
+    removePane,
+    layoutVersion,
+    showProjectBrowser,
+    setShowProjectBrowser,
+    setChangeDirPaneId,
+    maximizedPaneId,
+  } = useWorkspaceStore();
 
-  const layouts = useMemo(
-    () =>
-      workspace.panes.map((pane) => ({
-        i: pane.id,
-        x: pane.layout.x,
-        y: pane.layout.y,
-        w: pane.layout.w,
-        h: pane.layout.h,
-        minW: pane.layout.minW ?? 1,
-        minH: pane.layout.minH ?? 1,
-      })),
-    [workspace.panes]
+  const localDockviewApiRef = useRef<any>(null);
+  const previousPanesRef = useRef<string[]>([]);
+  const previousLayoutVersionRef = useRef(layoutVersion);
+
+  const handleReady = useCallback(
+    (event: DockviewReadyEvent) => {
+      localDockviewApiRef.current = event.api;
+      dockviewApiRef.current = event.api;
+      previousPanesRef.current = workspace.panes.map((p) => p.id);
+      previousLayoutVersionRef.current = layoutVersion;
+
+      // Add existing panes to dockview with positioning
+      const addedIds = new Set<string>();
+      workspace.panes.forEach((pane, index) => {
+        const profile =
+          profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+
+        const addPanelConfig: any = {
+          id: pane.id,
+          component: 'terminal',
+          title: profile.name,
+          params: {
+            paneId: pane.id,
+            profile,
+            cwd: pane.cwd,
+          },
+        };
+
+        // Use preset positioning if available — but only if the reference exists
+        if (
+          pane.dockviewPosition?.direction &&
+          pane.dockviewPosition.referenceId &&
+          addedIds.has(pane.dockviewPosition.referenceId)
+        ) {
+          addPanelConfig.position = {
+            referencePanel: pane.dockviewPosition.referenceId,
+            direction: pane.dockviewPosition.direction,
+          };
+        } else if (index > 0 && addedIds.size > 0) {
+          // Fallback: split right from previous added pane
+          const prevPane = workspace.panes[index - 1];
+          if (prevPane && addedIds.has(prevPane.id)) {
+            addPanelConfig.position = {
+              referencePanel: prevPane.id,
+              direction: 'right',
+            };
+          }
+        }
+
+        try {
+          event.api.addPanel(addPanelConfig);
+          addedIds.add(pane.id);
+        } catch {
+          // Reference panel missing — add without position
+          try {
+            delete addPanelConfig.position;
+            event.api.addPanel(addPanelConfig);
+            addedIds.add(pane.id);
+          } catch {
+            /* panel truly can't be added */
+          }
+        }
+      });
+    },
+    [workspace.panes, profiles, layoutVersion],
   );
 
-  const onLayoutChange = useCallback(
-    (layout: ReactGridLayout.Layout[]) => {
-      updateWorkspaceLayouts(layout);
+  // Detect preset/layout change and rearrange via Dockview API
+  useEffect(() => {
+    const api = localDockviewApiRef.current;
+    if (!api) return;
+
+    if (layoutVersion !== previousLayoutVersionRef.current) {
+      previousLayoutVersionRef.current = layoutVersion;
+
+      // Layout version bumped (preset applied) — rearrange without full remount.
+      // Remove all existing panels from Dockview, then re-add with new positions.
+      // Terminal instances survive in the registry.
+      try {
+        api.clear();
+      } catch {
+        /* may already be empty */
+      }
+
+      const reAddedIds = new Set<string>();
+      workspace.panes.forEach((pane, index) => {
+        const profile =
+          profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+
+        const addPanelConfig: any = {
+          id: pane.id,
+          component: 'terminal',
+          title: profile.name,
+          params: {
+            paneId: pane.id,
+            profile,
+            cwd: pane.cwd,
+          },
+        };
+
+        if (
+          pane.dockviewPosition?.direction &&
+          pane.dockviewPosition.referenceId &&
+          reAddedIds.has(pane.dockviewPosition.referenceId)
+        ) {
+          addPanelConfig.position = {
+            referencePanel: pane.dockviewPosition.referenceId,
+            direction: pane.dockviewPosition.direction,
+          };
+        } else if (index > 0) {
+          const prevPane = workspace.panes[index - 1];
+          if (prevPane && reAddedIds.has(prevPane.id)) {
+            addPanelConfig.position = {
+              referencePanel: prevPane.id,
+              direction: 'right',
+            };
+          }
+        }
+
+        try {
+          api.addPanel(addPanelConfig);
+          reAddedIds.add(pane.id);
+        } catch {
+          try {
+            delete addPanelConfig.position;
+            api.addPanel(addPanelConfig);
+            reAddedIds.add(pane.id);
+          } catch {
+            /* skip */
+          }
+        }
+      });
+
+      previousPanesRef.current = workspace.panes.map((p) => p.id);
+      return;
+    }
+
+    // Normal incremental sync — add/remove individual panes
+    const currentPaneIds = workspace.panes.map((p) => p.id);
+
+    // Remove panels that no longer exist in store
+    const removedPaneIds = previousPanesRef.current.filter(
+      (id) => !currentPaneIds.includes(id),
+    );
+    removedPaneIds.forEach((id) => {
+      try {
+        const panel = api.getPanel(id);
+        if (panel) api.removePanel(panel);
+      } catch {
+        // Panel may already be gone
+      }
+      // Truly destroy the terminal — pane was closed by user
+      destroyTerminalEntry(id);
+      usePaneStatusStore.getState().removeStatus(id);
+    });
+
+    // Add new panels
+    const newPaneIds = currentPaneIds.filter(
+      (id) => !previousPanesRef.current.includes(id),
+    );
+
+    newPaneIds.forEach((paneId) => {
+      const pane = workspace.panes.find((p) => p.id === paneId);
+      if (!pane) return;
+
+      const profile =
+        profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+      const index = workspace.panes.indexOf(pane);
+
+      const addPanelConfig: any = {
+        id: pane.id,
+        component: 'terminal',
+        title: profile.name,
+        params: {
+          paneId: pane.id,
+          profile,
+          cwd: pane.cwd,
+        },
+      };
+
+      // Position the new panel — verify references exist before using them
+      const panelExists = (id: string) => {
+        try {
+          return !!api.getPanel(id);
+        } catch {
+          return false;
+        }
+      };
+
+      if (pane.splitFrom?.paneId && panelExists(pane.splitFrom.paneId)) {
+        addPanelConfig.position = {
+          referencePanel: pane.splitFrom.paneId,
+          direction: pane.splitFrom.direction,
+        };
+      } else if (
+        pane.dockviewPosition?.direction &&
+        pane.dockviewPosition.referenceId &&
+        panelExists(pane.dockviewPosition.referenceId)
+      ) {
+        addPanelConfig.position = {
+          referencePanel: pane.dockviewPosition.referenceId,
+          direction: pane.dockviewPosition.direction,
+        };
+      } else if (index > 0) {
+        const prevId = currentPaneIds[currentPaneIds.indexOf(paneId) - 1];
+        if (prevId && panelExists(prevId)) {
+          addPanelConfig.position = {
+            referencePanel: prevId,
+            direction: 'right',
+          };
+        }
+      }
+
+      try {
+        api.addPanel(addPanelConfig);
+      } catch {
+        try {
+          delete addPanelConfig.position;
+          api.addPanel(addPanelConfig);
+        } catch {
+          /* skip */
+        }
+      }
+    });
+
+    previousPanesRef.current = currentPaneIds;
+  }, [workspace.panes, profiles, layoutVersion]);
+
+  // Handle maximize/restore via Dockview API
+  useEffect(() => {
+    const api = localDockviewApiRef.current;
+    if (!api) return;
+
+    if (maximizedPaneId) {
+      try {
+        const panel = api.getPanel(maximizedPaneId);
+        if (panel) {
+          api.maximizeGroup(panel);
+        }
+      } catch {
+        /* Panel may not exist */
+      }
+    } else {
+      try {
+        if (api.hasMaximizedGroup()) {
+          api.exitMaximizedGroup();
+        }
+      } catch {
+        /* No maximized group */
+      }
+    }
+  }, [maximizedPaneId]);
+
+  // Clean up orphaned registry entries when panes change
+  useEffect(() => {
+    const activePaneIds = workspace.panes.map((p) => p.id);
+    cleanupOrphanedEntries(activePaneIds);
+  }, [workspace.panes]);
+
+  // Debounced layout save to localStorage
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const state = useWorkspaceStore.getState();
+      const api = localDockviewApiRef.current;
+      let dockviewLayout = null;
+      try {
+        if (api) dockviewLayout = api.toJSON();
+      } catch {
+        /* ignore */
+      }
+      saveLayout(
+        state.workspace.panes,
+        state.activePaneId,
+        state.activePreset,
+        dockviewLayout,
+      );
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [workspace.panes, maximizedPaneId]);
+
+  const handlePanelClose = useCallback(
+    (panelId: string) => {
+      removePane(panelId);
     },
-    [updateWorkspaceLayouts]
+    [removePane],
+  );
+
+  // Stable component reference — TerminalPane subscribes to store for isActive
+  const components = useMemo(
+    () => ({
+      terminal: (props: any) => (
+        <TerminalPaneWrapper
+          paneId={props.params.paneId}
+          profile={props.params.profile}
+          cwd={props.params.cwd}
+          onClose={() => handlePanelClose(props.params.paneId)}
+        />
+      ),
+    }),
+    [handlePanelClose],
   );
 
   if (workspace.panes.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
-          className="text-center"
-        >
-          {/* Icon with gradient background */}
-          <div className="relative inline-flex mb-5">
-            <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center"
-              style={{
-                background: "linear-gradient(135deg, rgba(59,130,246,0.12), rgba(139,92,246,0.12))",
-                border: "1px solid rgba(255,255,255,0.05)",
-              }}
-            >
-              <Terminal size={24} className="text-zinc-400" strokeWidth={1.5} />
-            </div>
-            {/* Subtle glow behind icon */}
-            <div
-              className="absolute inset-0 rounded-2xl blur-xl opacity-40"
-              style={{ background: "var(--accent-gradient)" }}
-            />
-          </div>
-
-          <p className="text-[15px] font-medium text-zinc-300 mb-1.5">
-            No terminals open
-          </p>
-          <p className="text-[13px] text-zinc-500 mb-5">
-            Launch a terminal to get started
-          </p>
-
-          {/* Quick-launch button */}
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => addPane(profiles[0]?.id ?? "system-shell")}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium text-zinc-200 transition-colors duration-200"
-            style={{
-              background: "linear-gradient(135deg, rgba(59,130,246,0.15), rgba(139,92,246,0.15))",
-              border: "1px solid rgba(59,130,246,0.2)",
-            }}
-          >
-            <Plus size={14} strokeWidth={2} />
-            <span>New Terminal</span>
-          </motion.button>
-
-          {/* Keyboard hint */}
-          <p className="text-[11px] text-zinc-600 mt-3">
-            or use <kbd className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] text-zinc-400 font-mono text-[10px]">+ Terminal</kbd> above
-          </p>
-        </motion.div>
-      </div>
-    );
+    return <ProjectBrowser />;
   }
 
   return (
-    <div className="flex-1 p-2 overflow-hidden">
-      <ResponsiveGridLayout
-        className="layout"
-        layouts={{ lg: layouts }}
-        breakpoints={{ lg: 0 }}
-        cols={{ lg: workspace.gridCols }}
-        rowHeight={80}
-        isDraggable
-        isResizable
-        compactType={null}
-        preventCollision={false}
-        onLayoutChange={onLayoutChange}
-        draggableHandle=".pane-drag-handle"
-        margin={[6, 6]}
-      >
-        {workspace.panes.map((pane) => {
-          const profile = profiles.find((p) => p.id === pane.profileId) ?? profiles[0];
-          return (
-            <div key={pane.id} className="h-full">
-              <AnimatePresence>
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.97 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
-                  className="h-full"
-                >
-                  <TerminalPane
-                    paneId={pane.id}
-                    profile={profile}
-                    isActive={activePaneId === pane.id}
-                    onFocus={() => setActivePaneId(pane.id)}
-                    onClose={() => removePane(pane.id)}
-                  />
-                </motion.div>
-              </AnimatePresence>
-            </div>
-          );
-        })}
-      </ResponsiveGridLayout>
+    <div className="relative flex-1 overflow-hidden">
+      <DockviewReact
+        onReady={handleReady}
+        components={components}
+        disableFloatingGroups
+        className="h-full w-full"
+      />
+      {/* Project browser overlay */}
+      <AnimatePresence>
+        {showProjectBrowser && (
+          <ProjectBrowser
+            overlay
+            onClose={() => {
+              setShowProjectBrowser(false);
+              setChangeDirPaneId(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

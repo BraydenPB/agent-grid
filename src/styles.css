@@ -1,34 +1,66 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 /* ─── Design tokens ─── */
 :root {
-  /* Accent system — electric blue → violet gradient */
+  /* Accent system */
   --accent-1: #3b82f6;
   --accent-2: #8b5cf6;
   --accent-3: #06b6d4;
-  --accent-glow: rgba(59, 130, 246, 0.15);
+  --accent-glow: rgba(59, 130, 246, 0.12);
   --accent-gradient: linear-gradient(135deg, var(--accent-1), var(--accent-2));
-  --accent-gradient-vivid: linear-gradient(135deg, var(--accent-3), var(--accent-1), var(--accent-2));
+  --accent-gradient-vivid: linear-gradient(
+    135deg,
+    var(--accent-3),
+    var(--accent-1),
+    var(--accent-2)
+  );
 
-  /* Surface system — layered depth */
-  --surface-0: #09090b;
-  --surface-1: rgba(24, 24, 27, 0.7);
-  --surface-2: rgba(39, 39, 42, 0.5);
-  --surface-3: rgba(63, 63, 70, 0.3);
+  /* Surface system — rgba overlays, not hex grays */
+  --surface-0: #08090a;
+  --surface-1: rgba(255, 255, 255, 0.02);
+  --surface-2: rgba(255, 255, 255, 0.04);
+  --surface-3: rgba(255, 255, 255, 0.06);
 
-  /* Glass effect */
-  --glass-bg: rgba(15, 15, 20, 0.72);
-  --glass-border: rgba(255, 255, 255, 0.06);
-  --glass-blur: 16px;
-  --glass-highlight: rgba(255, 255, 255, 0.03);
+  /* Ring — use box-shadow for borders everywhere */
+  --ring-subtle: 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --ring-default: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --ring-strong: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  --ring-focus: 0 0 0 1px rgba(59, 130, 246, 0.4);
+
+  /* Elevation shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-lg:
+    0 4px 16px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-xl:
+    0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+  /* Glass */
+  --glass-bg: rgba(12, 12, 16, 0.82);
+  --glass-blur: 20px;
+
+  /* Radius scale */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Transition */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 100ms;
+  --duration-normal: 150ms;
 
   /* Typography */
-  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
 body {
@@ -45,13 +77,25 @@ body {
 }
 
 .mesh-bg::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 80% 50% at 20% 0%, rgba(59, 130, 246, 0.08), transparent 60%),
-    radial-gradient(ellipse 60% 40% at 80% 10%, rgba(139, 92, 246, 0.06), transparent 50%),
-    radial-gradient(ellipse 50% 60% at 50% 100%, rgba(6, 182, 212, 0.04), transparent 60%);
+    radial-gradient(
+      ellipse 80% 50% at 20% 0%,
+      rgba(59, 130, 246, 0.06),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 40% at 80% 10%,
+      rgba(139, 92, 246, 0.04),
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 50% 60% at 50% 100%,
+      rgba(6, 182, 212, 0.03),
+      transparent 60%
+    );
   pointer-events: none;
   z-index: 0;
 }
@@ -66,57 +110,65 @@ body {
   z-index: 1;
 }
 
-/* ─── Glassmorphism utility ─── */
+/* ─── Glass surfaces ─── */
 .glass {
   background: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border);
+  box-shadow:
+    var(--ring-subtle),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .glass-elevated {
-  background: rgba(30, 30, 40, 0.92);
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(16, 16, 22, 0.95);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
   box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
-    0 1px 0 rgba(255, 255, 255, 0.06) inset;
+    var(--ring-default),
+    0 2px 4px rgba(0, 0, 0, 0.2),
+    0 8px 24px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
-/* ─── Gradient border utility ─── */
+/* ─── Gradient border utility (used for overlays/modals) ─── */
 .gradient-border {
   position: relative;
 }
 
 .gradient-border::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: var(--accent-gradient);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  background: var(--pane-accent, var(--accent-gradient));
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
   mask-composite: exclude;
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity var(--duration-normal) var(--ease-out);
   pointer-events: none;
 }
 
 .gradient-border.active::before {
-  opacity: 1;
+  opacity: 0.6;
 }
 
 /* ─── Glow effects ─── */
 .glow-sm {
-  box-shadow: 0 0 12px -2px var(--accent-glow);
+  box-shadow: 0 0 8px -2px var(--accent-glow);
 }
 
 .glow-md {
-  box-shadow: 0 0 24px -4px var(--accent-glow), 0 0 8px -2px var(--accent-glow);
+  box-shadow:
+    0 0 16px -4px var(--accent-glow),
+    0 0 6px -2px var(--accent-glow);
 }
 
 /* ─── Animated gradient text ─── */
@@ -130,104 +182,165 @@ body {
 }
 
 @keyframes gradient-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
 }
 
-/* ─── Pulse ring for active elements ─── */
 @keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.3); }
-  70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.25);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(59, 130, 246, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
 }
 
-/* ─── Subtle float animation ─── */
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
+/* ─── xterm.js ─── */
+.terminal-container {
+  padding: 4px 4px 4px 6px;
 }
 
-/* ─── xterm.js container ─── */
 .xterm {
   height: 100%;
   width: 100%;
 }
 
-/* ─── xterm search highlight decorations ─── */
 .xterm-find-result-decoration {
-  outline: 1px solid rgba(59, 130, 246, 0.5);
-  background: rgba(59, 130, 246, 0.15);
+  outline: 1px solid rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.12);
   border-radius: 1px;
 }
 
 .xterm-find-active-result-decoration {
-  outline: 2px solid rgba(59, 130, 246, 0.8);
-  background: rgba(59, 130, 246, 0.3);
+  outline: 2px solid rgba(59, 130, 246, 0.7);
+  background: rgba(59, 130, 246, 0.25);
   border-radius: 1px;
 }
 
-/* ─── Link hover styling ─── */
 .xterm a {
   text-decoration: underline;
-  text-decoration-color: rgba(108, 182, 255, 0.4);
+  text-decoration-color: rgba(108, 182, 255, 0.3);
 }
 
-/* ─── Animate-in utility ─── */
+/* ─── Animate-in ─── */
 .animate-in {
-  animation: animate-in 0.15s ease-out;
+  animation: animate-in 0.12s var(--ease-out);
 }
 
 @keyframes animate-in {
-  from { opacity: 0; transform: scale(0.96) translateY(-2px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
-/* Soften xterm scrollbar */
-.xterm-viewport::-webkit-scrollbar {
-  width: 6px;
-}
-
-.xterm-viewport::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-
-.xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
-
-/* ─── react-grid-layout overrides ─── */
-.react-grid-item.react-grid-placeholder {
-  background: rgba(59, 130, 246, 0.1) !important;
-  border: 1px dashed rgba(59, 130, 246, 0.35) !important;
-  border-radius: 0.75rem;
-  backdrop-filter: blur(4px);
-}
-
-.react-grid-item > .react-resizable-handle::after {
-  border-right-color: rgba(255, 255, 255, 0.08) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
-}
-
-/* ─── Smooth scrollbar for app ─── */
+/* ─── Scrollbars ─── */
+.xterm-viewport::-webkit-scrollbar,
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
+.xterm-viewport::-webkit-scrollbar-track,
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
+.xterm-viewport::-webkit-scrollbar-thumb,
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 99px;
+  border: 1px solid transparent;
 }
 
+.xterm-viewport::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ─── Inactive pane dimming (like iTerm2) ─── */
+.pane-inactive .terminal-container {
+  opacity: 0.55;
+  transition: opacity var(--duration-normal) var(--ease-out);
+}
+
+.pane-active .terminal-container {
+  opacity: 1;
+  transition: opacity var(--duration-normal) var(--ease-out);
+}
+
+/* Active pane top accent line */
+.pane-active > .pane-drag-handle {
+  box-shadow: inset 0 2px 0 0 var(--accent-1);
+}
+
+/* ─── Dockview overrides ─── */
+/* Completely remove native tab headers — we use our own pane headers */
+.dv-tabs-and-actions-container {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+}
+
+/* Reset any Dockview container variables that add tab height */
+.dockview-theme-dark,
+.dockview-theme-light,
+.dockview-theme-vs,
+.dockview-theme-dracula,
+.dockview-theme-replit,
+.dockview-theme-abyss,
+.dockview-theme-abyss-spaced,
+[class*='dockview-theme'] {
+  --dv-tabs-and-actions-container-height: 0px !important;
+}
+
+/* Target the dockview container specifically */
+.dv-dockview {
+  --dv-tabs-and-actions-container-height: 0px;
+}
+
+/* Hide any stray tab elements */
+.dv-default-tab,
+.dv-tab,
+.dv-tabs-container,
+.dv-void-container,
+.dv-actions-container {
+  display: none !important;
+}
+
+/* Resize sash — thin visible separator between panes */
+.dv-resize-container > .dv-sash-container .dv-sash {
+  background: rgba(255, 255, 255, 0.06) !important;
+  transition: background 150ms ease;
+}
+
+.dv-resize-container > .dv-sash-container .dv-sash:hover {
+  background: rgba(59, 130, 246, 0.35) !important;
+}
+
+/* Ensure content fills the full group (no header gap) */
+.dv-groupview > .dv-content-container {
+  top: 0 !important;
+}
+
+/* Group border separators — none needed, gap handles spacing */
+.dv-groupview {
+  border: none !important;
 }
