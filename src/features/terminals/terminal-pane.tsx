@@ -1,20 +1,29 @@
-import { useEffect, useRef, useCallback, useState } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { SearchAddon } from "@xterm/addon-search";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ClipboardAddon } from "@xterm/addon-clipboard";
-import { SerializeAddon } from "@xterm/addon-serialize";
-import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { ImageAddon } from "@xterm/addon-image";
-import { getPlatform, spawnPty, type ShimPty } from "@/lib/tauri-shim";
-import "@xterm/xterm/css/xterm.css";
-import type { TerminalProfile } from "@/types";
-import { resolveShellCommand } from "@/lib/profiles";
-import { cn } from "@/lib/utils";
-import { TerminalSearch } from "./terminal-search";
-import { TerminalContextMenu } from "./terminal-context-menu";
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
+import { SearchAddon } from '@xterm/addon-search';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
+import { SerializeAddon } from '@xterm/addon-serialize';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { ImageAddon } from '@xterm/addon-image';
+import { X, Maximize2, Minimize2 } from 'lucide-react';
+import '@xterm/xterm/css/xterm.css';
+import { spawnPty, getPlatform, type ShimPty } from '@/lib/tauri-shim';
+import { resolveShellCommand } from '@/lib/profiles';
+import { normalizeCwd } from '@/lib/cwd';
+import { useWorkspaceStore } from '@/store/workspace-store';
+import {
+  getTerminalEntry,
+  setTerminalEntry,
+  type TerminalEntry,
+} from '@/lib/terminal-registry';
+import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
+import type { TerminalProfile } from '@/types';
+import { cn } from '@/lib/utils';
+import { TerminalSearch } from './terminal-search';
+import { TerminalContextMenu } from './terminal-context-menu';
 
 /* ── Constants ── */
 const FONT_SIZE_MIN = 8;
@@ -22,29 +31,29 @@ const FONT_SIZE_MAX = 28;
 const FONT_SIZE_DEFAULT = 13;
 
 const TERMINAL_THEME = {
-  background: "#0a0a0f",
-  foreground: "#c8ccd4",
-  cursor: "#528bff",
-  cursorAccent: "#0a0a0f",
-  selectionBackground: "rgba(59, 130, 246, 0.25)",
-  selectionForeground: "#e4e8f0",
-  selectionInactiveBackground: "rgba(59, 130, 246, 0.12)",
-  black: "#3b4048",
-  red: "#f47067",
-  green: "#57ab5a",
-  yellow: "#e0a658",
-  blue: "#6cb6ff",
-  magenta: "#c678dd",
-  cyan: "#56d4dd",
-  white: "#abb2bf",
-  brightBlack: "#636d83",
-  brightRed: "#f47067",
-  brightGreen: "#7ee787",
-  brightYellow: "#f0c674",
-  brightBlue: "#79c0ff",
-  brightMagenta: "#d2a8ff",
-  brightCyan: "#76e4f7",
-  brightWhite: "#e6edf3",
+  background: '#0a0a0f',
+  foreground: '#c8ccd4',
+  cursor: '#528bff',
+  cursorAccent: '#0a0a0f',
+  selectionBackground: 'rgba(59, 130, 246, 0.25)',
+  selectionForeground: '#e4e8f0',
+  selectionInactiveBackground: 'rgba(59, 130, 246, 0.12)',
+  black: '#3b4048',
+  red: '#f47067',
+  green: '#57ab5a',
+  yellow: '#e0a658',
+  blue: '#6cb6ff',
+  magenta: '#c678dd',
+  cyan: '#56d4dd',
+  white: '#abb2bf',
+  brightBlack: '#636d83',
+  brightRed: '#f47067',
+  brightGreen: '#7ee787',
+  brightYellow: '#f0c674',
+  brightBlue: '#79c0ff',
+  brightMagenta: '#d2a8ff',
+  brightCyan: '#76e4f7',
+  brightWhite: '#e6edf3',
 } as const;
 
 /* ── Types ── */
@@ -54,224 +63,491 @@ interface TerminalPaneProps {
   onFocus: () => void;
   onClose: () => void;
   paneId: string;
+  initialCwd?: string;
 }
 
-export function TerminalPane({ profile, isActive, onFocus, onClose, paneId }: TerminalPaneProps) {
+const IDLE_TIMEOUT_MS = 3000;
+
+export function TerminalPane({
+  profile: initialProfile,
+  isActive,
+  onFocus,
+  onClose,
+  paneId,
+  initialCwd,
+}: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const searchAddonRef = useRef<SearchAddon | null>(null);
-  const serializeAddonRef = useRef<SerializeAddon | null>(null);
-  const ptyRef = useRef<ShimPty | null>(null);
-  const mountedRef = useRef(false);
-  const fontSizeRef = useRef(FONT_SIZE_DEFAULT);
+  const entryRef = useRef<TerminalEntry | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const processExitedRef = useRef(false);
+
+  const paneStatus = usePaneStatusStore((s) => s.statuses[paneId] ?? 'working');
+  const setStatus = usePaneStatusStore((s) => s.setStatus);
+  const statusColor = STATUS_COLORS[paneStatus];
 
   const [searchVisible, setSearchVisible] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean }>({
-    x: 0, y: 0, visible: false,
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    visible: boolean;
+  }>({
+    x: 0,
+    y: 0,
+    visible: false,
   });
-  const [cwd, setCwd] = useState<string>("");
+  const [cwd, setCwd] = useState<string>(initialCwd || '');
+  const profiles = useWorkspaceStore(
+    (s: { profiles: TerminalProfile[] }) => s.profiles,
+  );
+  const paneProfileId = useWorkspaceStore(
+    (s: { workspace: { panes: { id: string; profileId: string }[] } }) =>
+      s.workspace.panes.find(
+        (p: { id: string; profileId: string }) => p.id === paneId,
+      )?.profileId ?? initialProfile.id,
+  );
+  const updatePaneProfile = useWorkspaceStore(
+    (s: { updatePaneProfile: (paneId: string, profileId: string) => void }) =>
+      s.updatePaneProfile,
+  );
+  // Derive activeProfile from store — single source of truth for color etc.
+  const activeProfile =
+    profiles.find((p) => p.id === paneProfileId) ?? initialProfile;
+  // Per-pane color override takes precedence over profile color
+  const paneColorOverride = useWorkspaceStore(
+    (s) => s.workspace.panes.find((p) => p.id === paneId)?.colorOverride,
+  );
+  const effectiveColor = paneColorOverride ?? activeProfile.color ?? '#636d83';
+
+  // Get pane index for display (1-based)
+  const paneIndex = useWorkspaceStore(
+    (s: { workspace: { panes: { id: string }[] } }) =>
+      s.workspace.panes.findIndex((p: { id: string }) => p.id === paneId),
+  );
+  const toggleMaximize = useWorkspaceStore(
+    (s: { toggleMaximize: (id: string) => void }) => s.toggleMaximize,
+  );
+  const isMaximized = useWorkspaceStore(
+    (s: { maximizedPaneId: string | null }) => s.maximizedPaneId === paneId,
+  );
 
   /* ── Addon loading ── */
-  const loadAddons = useCallback((term: Terminal, fitAddon: FitAddon) => {
-    // Core: fit
-    term.loadAddon(fitAddon);
+  const loadAddons = useCallback(
+    (
+      term: Terminal,
+      fitAddon: FitAddon,
+    ): { searchAddon: SearchAddon; serializeAddon: SerializeAddon } => {
+      term.loadAddon(fitAddon);
 
-    // GPU rendering (with fallback)
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-      });
-      term.loadAddon(webglAddon);
-    } catch {
-      // Canvas renderer fallback
-    }
-
-    // Search
-    const searchAddon = new SearchAddon();
-    term.loadAddon(searchAddon);
-    searchAddonRef.current = searchAddon;
-
-    // Clickable links
-    const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      window.open(uri, "_blank", "noopener");
-    }, {
-      urlRegex: /https?:\/\/[^\s'")\]}>]+/g,
-    });
-    term.loadAddon(webLinksAddon);
-
-    // System clipboard via OSC 52
-    const clipboardAddon = new ClipboardAddon();
-    term.loadAddon(clipboardAddon);
-
-    // Session serialization (for future restore)
-    const serializeAddon = new SerializeAddon();
-    term.loadAddon(serializeAddon);
-    serializeAddonRef.current = serializeAddon;
-
-    // Full unicode support (CJK, emoji widths)
-    const unicodeAddon = new Unicode11Addon();
-    term.loadAddon(unicodeAddon);
-    term.unicode.activeVersion = "11";
-
-    // Inline images (sixel, iTerm2 protocol)
-    try {
-      const imageAddon = new ImageAddon();
-      term.loadAddon(imageAddon);
-    } catch {
-      // Image addon may fail in some environments
-    }
-
-    // Ligatures — loaded async because it uses font introspection
-    import("@xterm/addon-ligatures").then(({ LigaturesAddon }) => {
       try {
-        term.loadAddon(new LigaturesAddon());
+        const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => webglAddon.dispose());
+        term.loadAddon(webglAddon);
       } catch {
-        // Ligatures not available
+        /* Canvas renderer fallback */
       }
-    }).catch(() => {});
-  }, []);
+
+      const searchAddon = new SearchAddon();
+      term.loadAddon(searchAddon);
+
+      const webLinksAddon = new WebLinksAddon(
+        (_event, uri) => {
+          window.open(uri, '_blank', 'noopener');
+        },
+        {
+          urlRegex: /https?:\/\/[^\s'")\]}>]+/g,
+        },
+      );
+      term.loadAddon(webLinksAddon);
+
+      const clipboardAddon = new ClipboardAddon();
+      term.loadAddon(clipboardAddon);
+
+      const serializeAddon = new SerializeAddon();
+      term.loadAddon(serializeAddon);
+
+      const unicodeAddon = new Unicode11Addon();
+      term.loadAddon(unicodeAddon);
+      term.unicode.activeVersion = '11';
+
+      try {
+        const imageAddon = new ImageAddon();
+        term.loadAddon(imageAddon);
+      } catch {
+        /* Image addon may fail */
+      }
+
+      import('@xterm/addon-ligatures')
+        .then(({ LigaturesAddon }) => {
+          try {
+            term.loadAddon(new LigaturesAddon());
+          } catch {
+            /* Ligatures not available */
+          }
+        })
+        .catch(() => {});
+
+      return { searchAddon, serializeAddon };
+    },
+    [],
+  );
 
   /* ── Keyboard shortcuts ── */
-  const attachKeyboardShortcuts = useCallback((term: Terminal) => {
-    term.attachCustomKeyEventHandler((e) => {
-      // Ctrl+Shift+F → open search
-      if (e.ctrlKey && e.shiftKey && e.key === "F" && e.type === "keydown") {
-        setSearchVisible(true);
-        return false;
-      }
-
-      // Ctrl+Shift+C → copy selection
-      if (e.ctrlKey && e.shiftKey && e.key === "C" && e.type === "keydown") {
-        const sel = term.getSelection();
-        if (sel) navigator.clipboard.writeText(sel);
-        return false;
-      }
-
-      // Ctrl+Shift+V → paste from clipboard
-      if (e.ctrlKey && e.shiftKey && e.key === "V" && e.type === "keydown") {
-        navigator.clipboard.readText().then((text) => {
-          ptyRef.current?.write(text);
-        });
-        return false;
-      }
-
-      // Ctrl+= / Ctrl+- → font zoom
-      if (e.ctrlKey && !e.shiftKey && e.key === "=" && e.type === "keydown") {
-        changeFontSize(1);
-        return false;
-      }
-      if (e.ctrlKey && !e.shiftKey && e.key === "-" && e.type === "keydown") {
-        changeFontSize(-1);
-        return false;
-      }
-      // Ctrl+0 → reset font size
-      if (e.ctrlKey && !e.shiftKey && e.key === "0" && e.type === "keydown") {
-        resetFontSize();
-        return false;
-      }
-
-      return true;
-    });
-  }, []);
+  const attachKeyboardShortcuts = useCallback(
+    (term: Terminal) => {
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === 'F' && e.type === 'keydown') {
+          setSearchVisible(true);
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
+          const sel = term.getSelection();
+          if (sel) void navigator.clipboard.writeText(sel);
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
+          void navigator.clipboard.readText().then((text) => {
+            entryRef.current?.pty?.write(text);
+          });
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'D' && e.type === 'keydown') {
+          const store = useWorkspaceStore.getState();
+          const currentPane = store.workspace.panes.find(
+            (p) => p.id === paneId,
+          );
+          store.addPane(currentPane?.profileId ?? initialProfile.id, 'right');
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'E' && e.type === 'keydown') {
+          const store = useWorkspaceStore.getState();
+          const currentPane = store.workspace.panes.find(
+            (p) => p.id === paneId,
+          );
+          store.addPane(currentPane?.profileId ?? initialProfile.id, 'below');
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'W' && e.type === 'keydown') {
+          onClose();
+          return false;
+        }
+        if (e.ctrlKey && !e.shiftKey && e.key === '=' && e.type === 'keydown') {
+          changeFontSize(1);
+          return false;
+        }
+        if (e.ctrlKey && !e.shiftKey && e.key === '-' && e.type === 'keydown') {
+          changeFontSize(-1);
+          return false;
+        }
+        if (e.ctrlKey && !e.shiftKey && e.key === '0' && e.type === 'keydown') {
+          resetFontSize();
+          return false;
+        }
+        // Let global shortcuts through to window handler
+        if (e.ctrlKey && e.shiftKey && e.key === 'P') return false;
+        if (e.ctrlKey && !e.shiftKey && e.key === 't') return false;
+        if (e.ctrlKey && !e.shiftKey && e.key === 'w') return false;
+        if (e.ctrlKey && !e.shiftKey && e.key === 'k') return false;
+        if (e.ctrlKey && e.key === 'Tab') return false;
+        if (e.ctrlKey && !e.shiftKey && (e.key === ']' || e.key === '['))
+          return false;
+        if (e.altKey && /^[1-9]$/.test(e.key)) return false;
+        if (e.ctrlKey && e.key === 'Enter') return false;
+        if (e.ctrlKey && e.altKey && e.key.startsWith('Arrow')) return false;
+        return true;
+      });
+    },
+    [initialProfile.id, onClose, paneId],
+  );
 
   /* ── Font zoom ── */
   const changeFontSize = (delta: number) => {
-    const term = terminalRef.current;
-    if (!term) return;
-    const next = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, fontSizeRef.current + delta));
-    if (next === fontSizeRef.current) return;
-    fontSizeRef.current = next;
-    term.options.fontSize = next;
-    fitAddonRef.current?.fit();
+    const entry = entryRef.current;
+    if (!entry) return;
+    const next = Math.max(
+      FONT_SIZE_MIN,
+      Math.min(FONT_SIZE_MAX, entry.fontSize + delta),
+    );
+    if (next === entry.fontSize) return;
+    entry.fontSize = next;
+    entry.terminal.options.fontSize = next;
+    entry.fitAddon.fit();
   };
 
   const resetFontSize = () => {
-    const term = terminalRef.current;
-    if (!term) return;
-    fontSizeRef.current = FONT_SIZE_DEFAULT;
-    term.options.fontSize = FONT_SIZE_DEFAULT;
-    fitAddonRef.current?.fit();
+    const entry = entryRef.current;
+    if (!entry) return;
+    entry.fontSize = FONT_SIZE_DEFAULT;
+    entry.terminal.options.fontSize = FONT_SIZE_DEFAULT;
+    entry.fitAddon.fit();
   };
 
   /* ── OSC sequence handler for shell integration ── */
   const attachOscHandlers = useCallback((term: Terminal) => {
-    // OSC 7 — current working directory
-    // Shells emit: \e]7;file://hostname/path\a
     term.parser.registerOscHandler(7, (data) => {
-      try {
-        const url = new URL(data);
-        setCwd(decodeURIComponent(url.pathname));
-      } catch {
-        // Some shells emit just the path
-        if (data.startsWith("/") || /^[A-Z]:[\\/]/i.test(data)) {
-          setCwd(data);
-        }
-      }
+      const normalized = normalizeCwd(data, getPlatform());
+      if (normalized) setCwd(normalized);
       return true;
     });
 
-    // OSC 133 — VS Code-style command marks (prompt/command/output boundaries)
-    // A = prompt start, B = prompt end (command start), C = command executed, D = command finished
-    term.parser.registerOscHandler(133, () => {
-      // Future: emit events for command detection, exit code markers, etc.
-      // For now, just parse and acknowledge
-      // data.charAt(0) is the mark type: A, B, C, or D
-      return true;
-    });
-
-    // OSC 0 / OSC 2 — set window/tab title
-    term.parser.registerOscHandler(0, () => {
-      // Could update pane title from shell — hook into store later
-      return false; // Let xterm handle it too
-    });
-    term.parser.registerOscHandler(2, () => {
-      return false;
-    });
+    term.parser.registerOscHandler(133, () => true);
+    term.parser.registerOscHandler(0, () => false);
+    term.parser.registerOscHandler(2, () => false);
   }, []);
+
+  /* ── Status helpers ── */
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (processExitedRef.current) return;
+    idleTimerRef.current = setTimeout(() => {
+      setStatus(paneId, 'idle');
+    }, IDLE_TIMEOUT_MS);
+  }, [paneId, setStatus]);
+
+  /* ── Spawn (or re-spawn) PTY ── */
+  const spawnProcess = useCallback(
+    async (
+      entry: TerminalEntry,
+      profile: TerminalProfile,
+      workingDir?: string,
+    ): Promise<ShimPty | null> => {
+      const seq = ++entry.spawnSeq;
+      processExitedRef.current = false;
+      setStatus(paneId, 'working');
+
+      for (const d of entry.ptyDisposables) d.dispose();
+      entry.ptyDisposables = [];
+
+      if (entry.pty) {
+        entry.pty.kill();
+        entry.pty = null;
+      }
+
+      const cwd = workingDir
+        ? normalizeCwd(workingDir, getPlatform())
+        : undefined;
+      const { command, args } = resolveShellCommand(profile, getPlatform());
+
+      try {
+        const pty = await spawnPty({
+          command,
+          args,
+          cols: entry.terminal.cols,
+          rows: entry.terminal.rows,
+          cwd: cwd ?? undefined,
+        });
+
+        if (seq !== entry.spawnSeq) {
+          pty.kill();
+          return null;
+        }
+
+        pty.onData((data: Uint8Array) => {
+          entry.terminal.write(data);
+          // Track activity for status
+          if (!processExitedRef.current) {
+            const currentStatus =
+              usePaneStatusStore.getState().statuses[paneId];
+            const isCurrentlyActive =
+              useWorkspaceStore.getState().activePaneId === paneId;
+            if (!isCurrentlyActive && currentStatus !== 'attention') {
+              setStatus(paneId, 'attention');
+            } else if (isCurrentlyActive && currentStatus !== 'working') {
+              setStatus(paneId, 'working');
+            }
+            resetIdleTimer();
+          }
+        });
+        const dataDisposable = entry.terminal.onData((data: string) =>
+          pty.write(data),
+        );
+        const resizeDisposable = entry.terminal.onResize(({ cols, rows }) =>
+          pty.resize(cols, rows),
+        );
+        entry.ptyDisposables = [dataDisposable, resizeDisposable];
+
+        pty.onExit(({ exitCode }: { exitCode: number }) => {
+          if (seq !== entry.spawnSeq) return;
+          processExitedRef.current = true;
+          if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+          const color = exitCode === 0 ? '38;5;243' : '38;5;203';
+          const icon = exitCode === 0 ? '\u2713' : '\u2717';
+          entry.terminal.write(
+            `\r\n\x1b[${color}m${icon} Process exited with code ${exitCode}\x1b[0m\r\n`,
+          );
+          setStatus(paneId, exitCode === 0 ? 'done' : 'error');
+        });
+
+        resetIdleTimer();
+        entry.pty = pty;
+        return pty;
+      } catch (err) {
+        if (seq !== entry.spawnSeq) return null;
+        processExitedRef.current = true;
+        console.error('[agent-grid] PTY spawn failed:', err);
+        entry.terminal.write(
+          `\x1b[38;5;203mFailed to spawn: ${err instanceof Error ? err.message : String(err)}\x1b[0m\r\n`,
+        );
+        setStatus(paneId, 'error');
+        return null;
+      }
+    },
+    [paneId, setStatus, resetIdleTimer],
+  );
+
+  /* ── Profile switching ── */
+  const handleSwitchProfile = useCallback(
+    async (newProfile: TerminalProfile) => {
+      const entry = entryRef.current;
+      if (!entry) return;
+
+      updatePaneProfile(paneId, newProfile.id);
+      entry.profileId = newProfile.id;
+      entry.terminal.clear();
+      entry.terminal.reset();
+      entry.terminal.write(
+        `\x1b[38;5;243mSwitching to ${newProfile.name}...\x1b[0m\r\n`,
+      );
+
+      await spawnProcess(entry, newProfile, cwd || undefined);
+      entry.terminal.focus();
+    },
+    [spawnProcess, cwd, paneId, updatePaneProfile],
+  );
+
+  /* ── Directory changing ── */
+  const handleChangeDirectory = useCallback(() => {
+    const store = useWorkspaceStore.getState();
+    store.setChangeDirPaneId(paneId);
+    store.setShowProjectBrowser(true);
+  }, [paneId]);
+
+  // Consume pending cwd change from project browser
+  const pendingCwd = useWorkspaceStore((s) => s.pendingCwd);
+  useEffect(() => {
+    if (!pendingCwd || pendingCwd.paneId !== paneId) return;
+    const entry = entryRef.current;
+    if (!entry) return;
+
+    const newPath = pendingCwd.path;
+    useWorkspaceStore.getState().clearPendingCwd();
+
+    setCwd(newPath);
+    entry.cwd = newPath;
+    entry.terminal.clear();
+    entry.terminal.reset();
+    entry.terminal.write(
+      `\x1b[38;5;243mChanged directory to ${newPath}\x1b[0m\r\n`,
+    );
+
+    void spawnProcess(entry, activeProfile, newPath).then(() =>
+      entry.terminal.focus(),
+    );
+  }, [pendingCwd, paneId, activeProfile, spawnProcess]);
 
   /* ── Context menu handlers ── */
   const handleCopy = useCallback(() => {
-    const term = terminalRef.current;
-    if (!term) return;
-    const sel = term.getSelection();
-    if (sel) navigator.clipboard.writeText(sel);
+    const entry = entryRef.current;
+    if (!entry) return;
+    const sel = entry.terminal.getSelection();
+    if (sel) void navigator.clipboard.writeText(sel);
   }, []);
 
   const handlePaste = useCallback(() => {
-    navigator.clipboard.readText().then((text) => {
-      ptyRef.current?.write(text);
+    void navigator.clipboard.readText().then((text) => {
+      entryRef.current?.pty?.write(text);
     });
   }, []);
 
   const handleClear = useCallback(() => {
-    terminalRef.current?.clear();
+    entryRef.current?.terminal.clear();
   }, []);
 
   const handleReset = useCallback(() => {
-    terminalRef.current?.reset();
+    entryRef.current?.terminal.reset();
   }, []);
 
-  /* ── Right-click ── */
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
   }, []);
 
-  /* ── Terminal initialization ── */
-  const initTerminal = useCallback(async () => {
-    if (!containerRef.current || mountedRef.current) return;
-    mountedRef.current = true;
+  /* ── Double-click header to maximize/restore ── */
+  const handleHeaderDoubleClick = useCallback(() => {
+    toggleMaximize(paneId);
+  }, [paneId, toggleMaximize]);
+
+  /* ── Terminal initialization / reattachment ── */
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const existing = getTerminalEntry(paneId);
+
+    if (existing) {
+      // ── Reattach existing terminal ──
+      entryRef.current = existing;
+
+      // Move the xterm element into the new container
+      containerRef.current.appendChild(existing.element);
+
+      // Restore cwd and profile state
+      setCwd(existing.cwd);
+      if (existing.profileId !== paneProfileId) {
+        existing.profileId = paneProfileId;
+      }
+
+      // Re-fit after reattach (Dockview may have resized)
+      requestAnimationFrame(() => {
+        try {
+          existing.fitAddon.fit();
+        } catch {
+          /* not ready yet */
+        }
+      });
+
+      // Set up ResizeObserver for the new container
+      let disposed = false;
+      const resizeObserver = new ResizeObserver(() => {
+        if (disposed || !containerRef.current) return;
+        try {
+          existing.fitAddon.fit();
+        } catch {
+          /* ignore */
+        }
+      });
+      resizeObserver.observe(containerRef.current);
+
+      return () => {
+        disposed = true;
+        resizeObserver.disconnect();
+        // Detach xterm element from DOM but keep it alive in the registry
+        if (existing.element.parentNode) {
+          existing.element.parentNode.removeChild(existing.element);
+        }
+        // Guard: only clear if this effect still owns entryRef (a newer init
+        // may have already written its own entry after us).
+        if (entryRef.current === existing) {
+          entryRef.current = null;
+        }
+      };
+    }
+
+    // ── Create new terminal ──
+    const cancelled = { current: false };
+
+    const xtermContainer = document.createElement('div');
+    xtermContainer.style.width = '100%';
+    xtermContainer.style.height = '100%';
+    containerRef.current.appendChild(xtermContainer);
 
     const term = new Terminal({
       convertEol: true,
       cursorBlink: true,
-      cursorStyle: "bar",
+      cursorStyle: 'bar',
       cursorWidth: 2,
       fontSize: FONT_SIZE_DEFAULT,
-      fontFamily: "'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
-      fontWeight: "400",
+      fontFamily:
+        "'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
+      fontWeight: '400',
       letterSpacing: 0,
       lineHeight: 1.35,
       theme: TERMINAL_THEME,
@@ -283,152 +559,247 @@ export function TerminalPane({ profile, isActive, onFocus, onClose, paneId }: Te
     });
 
     const fitAddon = new FitAddon();
-    fitAddonRef.current = fitAddon;
-    terminalRef.current = term;
-
-    term.open(containerRef.current);
-    loadAddons(term, fitAddon);
+    term.open(xtermContainer);
+    const { searchAddon, serializeAddon } = loadAddons(term, fitAddon);
     attachKeyboardShortcuts(term);
     attachOscHandlers(term);
 
-    fitAddon.fit();
-
-    // Spawn PTY
-    const osPlatform = getPlatform();
-    const { command, args } = resolveShellCommand(profile, osPlatform);
-
-    // Build env with shell integration hints
-    const env: Record<string, string> = {
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      TERM_PROGRAM: "agent-grid",
-      ...profile.env,
+    const entry: TerminalEntry = {
+      terminal: term,
+      fitAddon,
+      searchAddon,
+      serializeAddon,
+      pty: null,
+      element: xtermContainer,
+      ptyDisposables: [],
+      spawnSeq: 0,
+      fontSize: FONT_SIZE_DEFAULT,
+      profileId: initialProfile.id,
+      cwd: initialCwd || '',
     };
 
-    let pty: ShimPty;
-    try {
-      const { spawn } = await import("tauri-pty");
-      pty = spawn(command, args, {
-        cols: term.cols,
-        rows: term.rows,
-        cwd: profile.cwd,
-        env,
-      }) as unknown as ShimPty;
-    } catch {
-      pty = spawnPty();
-    }
+    setTerminalEntry(paneId, entry);
+    entryRef.current = entry;
 
-    pty.onData((data: Uint8Array) => term.write(data));
-    term.onData((data: string) => pty.write(data));
-    term.onResize(({ cols, rows }) => pty.resize(cols, rows));
-
-    pty.onExit(({ exitCode }: { exitCode: number }) => {
-      const color = exitCode === 0 ? "38;5;243" : "38;5;203";
-      const icon = exitCode === 0 ? "✓" : "✗";
-      term.write(`\r\n\x1b[${color}m${icon} Process exited with code ${exitCode}\x1b[0m\r\n`);
-    });
-
-    ptyRef.current = pty;
-
-    // Resize observer
+    // ResizeObserver
+    let disposed = false;
+    let hasFitted = false;
     const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => fitAddon.fit());
+      if (disposed || !containerRef.current) return;
+      try {
+        fitAddon.fit();
+        hasFitted = true;
+      } catch {
+        /* not ready */
+      }
     });
     resizeObserver.observe(containerRef.current);
 
-    return () => {
-      resizeObserver.disconnect();
-      pty.kill();
-      term.dispose();
-      mountedRef.current = false;
+    // Force fit retries for Dockview layout settle
+    let fitAttempts = 0;
+    const tryFit = () => {
+      fitAttempts++;
+      if (disposed || !containerRef.current) return;
+      if (hasFitted && containerRef.current.offsetWidth > 0) return;
+      try {
+        if (containerRef.current.offsetWidth > 0) {
+          fitAddon.fit();
+          hasFitted = true;
+        }
+      } catch {
+        /* Still can't fit */
+      }
+      if (!hasFitted && fitAttempts < 10) requestAnimationFrame(tryFit);
     };
-  }, [profile, loadAddons, attachKeyboardShortcuts, attachOscHandlers]);
+    requestAnimationFrame(tryFit);
+
+    // Spawn PTY
+    void (async () => {
+      if (cancelled.current) return;
+      await spawnProcess(entry, initialProfile, initialCwd || undefined);
+    })();
+
+    return () => {
+      cancelled.current = true;
+      disposed = true;
+      resizeObserver.disconnect();
+      // Detach xterm element but keep in registry for potential reattach
+      if (xtermContainer.parentNode) {
+        xtermContainer.parentNode.removeChild(xtermContainer);
+      }
+      // Guard: only clear if this effect still owns entryRef (a newer init
+      // may have already written its own entry after us).
+      if (entryRef.current === entry) {
+        entryRef.current = null;
+      }
+    };
+  }, [paneId]); // Only re-run if paneId changes (never during rearrange)
 
   useEffect(() => {
-    let cleanupFn: (() => void) | undefined;
-    initTerminal().then((fn) => { cleanupFn = fn; });
-    return () => cleanupFn?.();
-  }, [initTerminal]);
-
-  useEffect(() => {
-    if (isActive && terminalRef.current) {
-      terminalRef.current.focus();
+    if (entryRef.current) {
+      entryRef.current.profileId = paneProfileId;
     }
-  }, [isActive]);
+  }, [paneProfileId]);
+
+  useEffect(() => {
+    if (isActive && entryRef.current) {
+      entryRef.current.terminal.focus();
+      // Clear attention status when pane gains focus
+      if (paneStatus === 'attention') {
+        setStatus(paneId, processExitedRef.current ? 'done' : 'working');
+      }
+    }
+  }, [isActive, paneId, paneStatus, setStatus]);
+
+  const cwdLabel = cwd ? cwd.split(/[\\/]/).pop() : '';
 
   return (
     <div
+      role="application"
+      aria-label={`Terminal: ${activeProfile.name}`}
       className={cn(
-        "flex flex-col h-full rounded-xl overflow-hidden transition-all duration-300 relative",
-        "gradient-border",
-        isActive && "active glow-sm"
+        'group relative flex h-full flex-col overflow-hidden',
+        isActive ? 'pane-active' : 'pane-inactive',
       )}
-      style={{
-        border: isActive ? "none" : "1px solid rgba(255,255,255,0.05)",
-        background: "#0a0a0f",
-      }}
+      style={{ background: '#0a0a0f' }}
       onMouseDown={onFocus}
       onContextMenu={handleContextMenu}
     >
-      {/* Pane header */}
-      <div className={cn(
-        "pane-drag-handle flex items-center justify-between px-3 py-1.5",
-        "select-none cursor-grab active:cursor-grabbing",
-        "border-b transition-colors duration-200",
-        isActive
-          ? "bg-white/[0.04] border-white/[0.06]"
-          : "bg-white/[0.02] border-white/[0.03]"
-      )}>
-        <div className="flex items-center gap-2 min-w-0">
-          {profile.color && (
-            <span
-              className={cn(
-                "w-2 h-2 rounded-full shrink-0 transition-all duration-300",
-                isActive ? "scale-100" : "scale-90 opacity-60"
-              )}
-              style={{
-                backgroundColor: profile.color,
-                boxShadow: isActive ? `0 0 8px ${profile.color}40` : "none",
-              }}
-            />
-          )}
-          <span className={cn(
-            "text-[11px] font-medium tracking-wide transition-colors duration-200 truncate",
-            isActive ? "text-zinc-300" : "text-zinc-500"
-          )}>
-            {profile.name}
+      {/* Compact pane header */}
+      <div
+        className={cn(
+          'pane-drag-handle flex h-7 shrink-0 items-center justify-between px-2',
+          'cursor-grab select-none active:cursor-grabbing',
+          'border-b border-white/[0.06]',
+          'transition-colors duration-100',
+          isActive ? 'bg-white/[0.04]' : 'bg-white/[0.02]',
+        )}
+        style={{ '--accent-1': effectiveColor } as React.CSSProperties}
+        onDoubleClick={handleHeaderDoubleClick}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {/* Pane number badge */}
+          <span
+            className={cn(
+              'w-3.5 shrink-0 text-center font-mono text-[9px] font-bold transition-colors duration-100',
+              isActive ? 'text-zinc-400' : 'text-zinc-700',
+            )}
+          >
+            {paneIndex + 1}
           </span>
-          {cwd && (
-            <span className="text-[10px] text-zinc-600 truncate max-w-[200px]" title={cwd}>
-              {cwd.split(/[\\/]/).pop()}
+
+          {/* Profile dot — always shows profile color */}
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full transition-all duration-200"
+            style={{
+              backgroundColor: effectiveColor,
+              opacity: isActive ? 1 : 0.35,
+              boxShadow: isActive ? `0 0 4px ${effectiveColor}66` : 'none',
+              outlineStyle:
+                paneStatus !== 'working' && statusColor !== 'transparent'
+                  ? 'solid'
+                  : 'none',
+              outlineWidth: '1.5px',
+              outlineOffset: '1.5px',
+              outlineColor:
+                paneStatus !== 'working' && statusColor !== 'transparent'
+                  ? statusColor
+                  : 'transparent',
+            }}
+          />
+
+          {/* Profile name */}
+          <span
+            className={cn(
+              'truncate text-[10px] font-medium transition-colors duration-100',
+              isActive ? 'text-zinc-300' : 'text-zinc-600',
+            )}
+          >
+            {activeProfile.name}
+          </span>
+
+          {/* CWD breadcrumb */}
+          {cwdLabel && (
+            <>
+              <span className="text-[9px] text-zinc-700/50">/</span>
+              <span
+                className="max-w-[140px] truncate text-[9px] text-zinc-600"
+                title={cwd}
+              >
+                {cwdLabel}
+              </span>
+            </>
+          )}
+
+          {/* Maximized indicator */}
+          {isMaximized && (
+            <span className="ml-1 rounded bg-white/[0.04] px-1 py-px text-[8px] font-medium text-zinc-600">
+              ESC to restore
             </span>
           )}
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onClose(); }}
-          className="text-zinc-600 hover:text-zinc-300 transition-all duration-150 rounded p-0.5 hover:bg-white/[0.06]"
-          title="Close pane"
+
+        {/* Header actions — always visible when maximized, hover otherwise */}
+        <div
+          className={cn(
+            'flex shrink-0 items-center gap-0.5',
+            'transition-opacity duration-100',
+            isMaximized ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          )}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+          {/* Maximize / Restore */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMaximize(paneId);
+            }}
+            className={cn(
+              'flex h-4 w-4 items-center justify-center rounded',
+              'transition-all duration-100',
+              isMaximized
+                ? 'text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'
+                : 'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+            )}
+            title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
+          >
+            {isMaximized ? (
+              <Minimize2 size={8} strokeWidth={2} />
+            ) : (
+              <Maximize2 size={8} strokeWidth={2} />
+            )}
+          </button>
+          {/* Close */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className={cn(
+              'flex h-4 w-4 items-center justify-center rounded',
+              'transition-all duration-100',
+              'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+            )}
+            title="Close pane (Ctrl+W)"
+          >
+            <X size={9} strokeWidth={2} />
+          </button>
+        </div>
       </div>
 
-      {/* Search overlay */}
+      {/* Search */}
       <TerminalSearch
-        searchAddon={searchAddonRef.current}
+        searchAddon={entryRef.current?.searchAddon ?? null}
         visible={searchVisible}
         onClose={() => {
           setSearchVisible(false);
-          terminalRef.current?.focus();
+          entryRef.current?.terminal.focus();
         }}
       />
 
-      {/* Terminal container */}
+      {/* Terminal */}
       <div
         ref={containerRef}
-        className="flex-1 min-h-0"
+        className="terminal-container min-h-0 flex-1"
         data-pane-id={paneId}
       />
 
@@ -443,7 +814,19 @@ export function TerminalPane({ profile, isActive, onFocus, onClose, paneId }: Te
         onClear={handleClear}
         onSearch={() => setSearchVisible(true)}
         onReset={handleReset}
-        hasSelection={!!terminalRef.current?.getSelection()}
+        hasSelection={!!entryRef.current?.terminal.getSelection()}
+        profileId={activeProfile.id}
+        paneId={paneId}
+        onSwitchProfile={(profile) => void handleSwitchProfile(profile)}
+        cwd={cwd}
+        onChangeDirectory={handleChangeDirectory}
+        onSplitRight={() =>
+          useWorkspaceStore.getState().addPane(activeProfile.id, 'right')
+        }
+        onSplitBelow={() =>
+          useWorkspaceStore.getState().addPane(activeProfile.id, 'below')
+        }
+        onClose_pane={onClose}
       />
     </div>
   );

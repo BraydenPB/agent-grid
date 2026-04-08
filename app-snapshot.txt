@@ -1,0 +1,19 @@
+uid=1_0 RootWebArea "Agent Grid" url="http://localhost:1420/"
+  uid=1_1 banner
+    uid=1_2 StaticText "Agent Grid"
+    uid=1_3 button "Terminal"
+    uid=1_4 button "Layout"
+    uid=1_5 StaticText "1"
+    uid=1_6 StaticText " "
+    uid=1_7 StaticText "pane"
+    uid=1_8 button "Minimize"
+    uid=1_9 button "Maximize"
+    uid=1_10 button "Close"
+  uid=1_11 main
+    uid=1_12 generic
+      uid=1_13 group
+        uid=1_14 StaticText "f0c64459-ba5c-415e-ae30-c3bd75926466"
+      uid=1_15 generic
+        uid=1_16 StaticText "Shell"
+        uid=1_17 button "Close pane"
+        uid=1_18 textbox "Terminal input"

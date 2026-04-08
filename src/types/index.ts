@@ -13,25 +13,26 @@ export interface Pane {
   id: string;
   profileId: string;
   title: string;
-  isActive: boolean;
-  // react-grid-layout position
-  layout: PaneLayout;
-}
-
-export interface PaneLayout {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  minW?: number;
-  minH?: number;
+  // Per-pane color override (takes precedence over profile color)
+  colorOverride?: string;
+  // Initial working directory (set from project browser)
+  cwd?: string;
+  // Dockview positioning — resolved with stable pane IDs
+  dockviewPosition?: {
+    referenceId?: string;
+    direction?: 'right' | 'below';
+  };
+  // Split from an existing pane (for dynamic adds)
+  splitFrom?: {
+    paneId: string;
+    direction: 'right' | 'below';
+  };
 }
 
 export interface Workspace {
   id: string;
   name: string;
   panes: Pane[];
-  gridCols: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,13 +41,7 @@ export interface Task {
   id: string;
   paneId: string;
   description: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: 'pending' | 'running' | 'completed' | 'failed';
   createdAt: string;
   completedAt?: string;
 }
-
-export type GridPreset = {
-  name: string;
-  cols: number;
-  layouts: PaneLayout[];
-};

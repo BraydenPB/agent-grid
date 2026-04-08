@@ -1,7 +1,14 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Search, X, ChevronUp, ChevronDown, CaseSensitive, Regex } from "lucide-react";
-import { cn } from "@/lib/utils";
-import type { SearchAddon } from "@xterm/addon-search";
+import { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  Search,
+  X,
+  ChevronUp,
+  ChevronDown,
+  CaseSensitive,
+  Regex,
+} from 'lucide-react';
+import type { SearchAddon } from '@xterm/addon-search';
+import { cn } from '@/lib/utils';
 
 interface TerminalSearchProps {
   searchAddon: SearchAddon | null;
@@ -9,11 +16,15 @@ interface TerminalSearchProps {
   onClose: () => void;
 }
 
-export function TerminalSearch({ searchAddon, visible, onClose }: TerminalSearchProps) {
-  const [query, setQuery] = useState("");
+export function TerminalSearch({
+  searchAddon,
+  visible,
+  onClose,
+}: TerminalSearchProps) {
+  const [query, setQuery] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
-  const [matchCount, setMatchCount] = useState<string>("");
+  const [matchCount, setMatchCount] = useState<string>('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -24,32 +35,36 @@ export function TerminalSearch({ searchAddon, visible, onClose }: TerminalSearch
   }, [visible]);
 
   const doSearch = useCallback(
-    (direction: "next" | "previous") => {
+    (direction: 'next' | 'previous') => {
       if (!searchAddon || !query) return;
-      const opts = { caseSensitive, regex: useRegex, incremental: direction === "next" };
+      const opts = {
+        caseSensitive,
+        regex: useRegex,
+        incremental: direction === 'next',
+      };
       const found =
-        direction === "next"
+        direction === 'next'
           ? searchAddon.findNext(query, opts)
           : searchAddon.findPrevious(query, opts);
-      setMatchCount(found ? "" : "No results");
+      setMatchCount(found ? '' : 'No results');
     },
-    [searchAddon, query, caseSensitive, useRegex]
+    [searchAddon, query, caseSensitive, useRegex],
   );
 
   useEffect(() => {
     if (!query) {
       searchAddon?.clearDecorations();
-      setMatchCount("");
+      setMatchCount('');
       return;
     }
-    doSearch("next");
+    doSearch('next');
   }, [query, caseSensitive, useRegex, doSearch, searchAddon]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      doSearch(e.shiftKey ? "previous" : "next");
-    } else if (e.key === "Escape") {
+      doSearch(e.shiftKey ? 'previous' : 'next');
+    } else if (e.key === 'Escape') {
       e.preventDefault();
       searchAddon?.clearDecorations();
       onClose();
@@ -60,71 +75,106 @@ export function TerminalSearch({ searchAddon, visible, onClose }: TerminalSearch
 
   return (
     <div
-      className={cn(
-        "absolute top-10 right-2 z-20 flex items-center gap-1 px-2 py-1.5 rounded-lg",
-        "glass-elevated"
-      )}
-      style={{ minWidth: 260 }}
+      role="search"
+      className="glass-elevated absolute top-8 right-2 z-20 flex items-center gap-1 rounded-md px-2 py-1"
+      style={{ minWidth: 220 }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <Search size={13} className="text-zinc-500 shrink-0" />
+      <Search size={12} className="shrink-0 text-zinc-600" />
       <input
         ref={inputRef}
         type="text"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Search…"
-        className="bg-transparent border-none outline-none text-[12px] text-zinc-200 placeholder:text-zinc-600 w-full min-w-0 px-1"
+        placeholder="Find..."
+        className="w-full min-w-0 border-none bg-transparent px-1 text-[11px] text-zinc-200 outline-none placeholder:text-zinc-600"
         spellCheck={false}
       />
       {matchCount && (
-        <span className="text-[10px] text-zinc-500 shrink-0">{matchCount}</span>
+        <span className="shrink-0 text-[9px] whitespace-nowrap text-zinc-600">
+          {matchCount}
+        </span>
       )}
-      <button
+      <ToggleBtn
+        active={caseSensitive}
         onClick={() => setCaseSensitive(!caseSensitive)}
-        className={cn(
-          "p-0.5 rounded transition-colors",
-          caseSensitive ? "text-blue-400 bg-blue-400/10" : "text-zinc-500 hover:text-zinc-300"
-        )}
         title="Match case"
       >
-        <CaseSensitive size={14} />
-      </button>
-      <button
+        <CaseSensitive size={13} />
+      </ToggleBtn>
+      <ToggleBtn
+        active={useRegex}
         onClick={() => setUseRegex(!useRegex)}
-        className={cn(
-          "p-0.5 rounded transition-colors",
-          useRegex ? "text-blue-400 bg-blue-400/10" : "text-zinc-500 hover:text-zinc-300"
-        )}
-        title="Use regex"
+        title="Regex"
       >
-        <Regex size={14} />
-      </button>
-      <button
-        onClick={() => doSearch("previous")}
-        className="p-0.5 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
-        title="Previous match (Shift+Enter)"
+        <Regex size={13} />
+      </ToggleBtn>
+      <IconBtn
+        onClick={() => doSearch('previous')}
+        title="Previous (Shift+Enter)"
       >
-        <ChevronUp size={14} />
-      </button>
-      <button
-        onClick={() => doSearch("next")}
-        className="p-0.5 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
-        title="Next match (Enter)"
-      >
-        <ChevronDown size={14} />
-      </button>
-      <button
+        <ChevronUp size={13} />
+      </IconBtn>
+      <IconBtn onClick={() => doSearch('next')} title="Next (Enter)">
+        <ChevronDown size={13} />
+      </IconBtn>
+      <IconBtn
         onClick={() => {
           searchAddon?.clearDecorations();
           onClose();
         }}
-        className="p-0.5 rounded text-zinc-500 hover:text-zinc-300 transition-colors"
         title="Close (Esc)"
       >
-        <X size={14} />
-      </button>
+        <X size={13} />
+      </IconBtn>
     </div>
+  );
+}
+
+function IconBtn({
+  children,
+  onClick,
+  title,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="rounded p-0.5 text-zinc-500 transition-colors duration-100 hover:text-zinc-300"
+    >
+      {children}
+    </button>
+  );
+}
+
+function ToggleBtn({
+  children,
+  active,
+  onClick,
+  title,
+}: {
+  children: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cn(
+        'rounded p-0.5 transition-colors duration-100',
+        active
+          ? 'bg-blue-400/[0.08] text-blue-400'
+          : 'text-zinc-500 hover:text-zinc-300',
+      )}
+    >
+      {children}
+    </button>
   );
 }

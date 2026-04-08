@@ -1,0 +1,78 @@
+/**
+ * CWD normalization for cross-platform PTY spawning.
+ *
+ * Git Bash / MSYS2 on Windows emits OSC 7 with POSIX-style paths
+ * (e.g. file://HOSTNAME/c/Users/brayd/Desktop). These need to be
+ * converted to native Windows paths before passing to a new PTY spawn.
+ */
+
+/**
+ * Convert an OSC 7 payload (either a file:// URL or bare path) into
+ * a native OS path suitable for PTY cwd.
+ *
+ * On Windows this handles:
+ *  - file://host/c/Users/… → C:\Users\…
+ *  - /c/Users/…            → C:\Users\…
+ *  - /C:/Users/…           → C:\Users\…   (already Windows-rooted inside URL)
+ *  - C:\Users\…            → C:\Users\…   (passthrough)
+ *
+ * On non-Windows, paths are returned as-is after basic cleanup.
+ */
+export function normalizeCwd(raw: string, platform: string): string | null {
+  if (!raw || !raw.trim()) return null;
+
+  let path: string;
+
+  // ── 1. Parse file:// URLs ──
+  if (raw.startsWith('file://')) {
+    try {
+      const url = new URL(raw);
+      path = decodeURIComponent(url.pathname);
+    } catch {
+      // Malformed URL — try treating the remainder as a path
+      const stripped = raw.replace(/^file:\/\/[^/]*/, '');
+      path = decodeURIComponent(stripped);
+    }
+  } else {
+    path = raw;
+  }
+
+  // ── 2. Windows-specific normalization ──
+  if (platform === 'windows') {
+    // Strip leading slash before a drive letter: /C:/… → C:/…
+    path = path.replace(/^\/([A-Za-z]):/, '$1:');
+
+    // MSYS/Cygwin-style: /c/Users/… → C:\Users\…
+    path = path.replace(
+      /^\/([A-Za-z])\//,
+      (_, letter: string) => `${letter.toUpperCase()}:\\`,
+    );
+
+    // Normalize remaining forward slashes to backslashes
+    path = path.replace(/\//g, '\\');
+
+    // Must start with a drive letter after normalization
+    if (!/^[A-Za-z]:\\/.test(path)) return null;
+
+    // Collapse repeated backslashes (except the root \\)
+    path = path.replace(/\\{2,}/g, '\\');
+
+    // Strip trailing backslash (unless root like C:\)
+    if (path.length > 3 && path.endsWith('\\')) {
+      path = path.slice(0, -1);
+    }
+  } else {
+    // Unix: must be absolute
+    if (!path.startsWith('/')) return null;
+
+    // Collapse repeated slashes
+    path = path.replace(/\/{2,}/g, '/');
+
+    // Strip trailing slash (unless root /)
+    if (path.length > 1 && path.endsWith('/')) {
+      path = path.slice(0, -1);
+    }
+  }
+
+  return path;
+}
