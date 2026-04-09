@@ -1,45 +1,59 @@
 # Agent Grid — Roadmap
 
-## Phase 1: MVP (Current → v0.2)
-Match Lemonade's core experience, open source.
+## v0.1.0-beta.1 (Released 2026-04-08)
 
-### Done
-- [x] Tauri v2 + React + TypeScript scaffold
-- [x] PTY-backed terminal panes (xterm.js + WebGL)
-- [x] Configurable grid layout (react-grid-layout)
+Core multi-pane AI terminal. Security-audited, no known vulnerabilities.
+
+### Shipped
+
+- [x] Tauri v2 + React 19 + TypeScript scaffold
+- [x] PTY-backed terminal panes (xterm.js v6 + WebGL)
+- [x] Dockview IDE-style layout (tabs, splits, floating panels, drag-to-dock)
 - [x] Built-in profiles: Shell, Claude Code, Codex, Gemini CLI, Aider, OpenCode
-- [x] 7 layout presets (Single → 4×4)
-- [x] Zustand state store
-- [x] Cross-platform shell resolution
-
-### Next (UI/UX focus)
-- [ ] Polish terminal pane chrome (drag handle, maximize, context menu)
-- [ ] Sidebar profile cards with visual polish
-- [ ] Layout preset thumbnails
-- [ ] Keyboard shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab, etc.)
-- [ ] App bar with workspace name editing
-- [ ] Status bar
-- [ ] Custom window controls (frameless option)
-- [ ] Pane spawn/close animations
-- [ ] Ship monospace font (Cascadia Code)
-- [ ] Empty state / first-run experience
-
-### Then (Persistence)
-- [ ] Save/load workspaces to disk (JSON)
-- [ ] Workspace switcher (tabs or dropdown)
-- [ ] Custom profile editor UI
-- [ ] Import/export workspaces
-- [ ] Remember window size/position
-
-### v0.2 Release
-- [ ] Real app icon + branding
-- [ ] GitHub repo setup
-- [ ] GitHub Actions CI (build + release)
-- [ ] Auto-update via GitHub releases
+- [x] 5 layout presets (Single, 2-col, 3-col, 2x2, 3+1)
+- [x] Zustand state store with terminal registry
+- [x] Cross-platform shell resolution with injection prevention
+- [x] Command palette (Ctrl+Shift+P)
+- [x] Project browser (Ctrl+K) with git branch/dirty status
+- [x] Pane status indicators (working, idle, done, error, attention)
+- [x] Terminal search (Ctrl+Shift+F) with regex
+- [x] Context menu with profile switching, directory change, split, colors
+- [x] Keyboard shortcuts (split, navigate, maximize, font zoom, directional nav)
+- [x] Shortcut bar with context-aware hints
+- [x] Error boundary with layout reset recovery
+- [x] Custom frameless window with drag-to-move titlebar
+- [x] Layout persistence (localStorage)
+- [x] Per-pane color overrides
+- [x] CI pipeline (GitHub Actions)
+- [x] Conventional Commits + Husky + lint-staged
 
 ---
 
-## Phase 2: Studio (v0.3–v0.5)
+## v1.0 — Stable Release
+
+See [v1-release-checklist.md](v1-release-checklist.md) for the full prioritized audit.
+
+### Blocking
+
+- [ ] Test coverage for security-critical functions (shell quoting, path normalization, layout validation)
+- [ ] Code signing (Windows EV cert + macOS Developer ID)
+- [ ] Auto-updater via `tauri-plugin-updater`
+- [ ] Runtime validation for layout persistence (Zod or manual)
+- [ ] Clipboard error handling
+
+### Should Fix
+
+- [ ] Bundle size optimization (1.5MB → code-split)
+- [ ] ESLint warning cleanup (Dockview types, useEffect deps)
+- [ ] PTY zombie prevention
+- [ ] Error boundary production mode (hide stack traces)
+- [ ] Shell command allowlist
+- [ ] Upgrade lucide-react to v1.x
+
+---
+
+## v1.x — Studio
+
 Modular panel system — not just terminals.
 
 - [ ] Panel type system (terminal, browser, editor, notes, diff, kanban)
@@ -48,25 +62,26 @@ Modular panel system — not just terminals.
 - [ ] Embedded browser panel (via Tauri WebView)
 - [ ] Markdown notes panel
 - [ ] Git diff viewer panel
-- [ ] Task/Kanban board panel
-- [ ] Panel-to-panel communication (e.g., terminal output → notes)
-- [ ] Tabbed panels within grid cells
+- [ ] Panel-to-panel communication
+- [ ] Custom layout saving and sharing
 
 ---
 
-## Phase 3: Cluster (v0.6+)
+## v2.x — Cluster
+
 Multi-agent orchestration.
 
 - [ ] Task queue with assignment to specific panes
-- [ ] Skill-based agent assignment (route tasks to best tool)
+- [ ] Skill-based agent assignment
 - [ ] Native git worktree isolation per agent pane
 - [ ] Inter-agent context sharing
-- [ ] Orchestration sidebar (task status, agent activity)
-- [ ] Supervisor mode (one agent coordinates others)
+- [ ] Orchestration sidebar
+- [ ] Supervisor mode
 
 ---
 
-## Phase 4: Ecosystem (v1.0+)
+## v3.x — Ecosystem
+
 Community and integrations.
 
 - [ ] Plugin marketplace / registry
@@ -74,6 +89,5 @@ Community and integrations.
 - [ ] GitHub / Linear / Obsidian connectors
 - [ ] Voice input
 - [ ] AI-controlled browser automation
-- [ ] Inline diff review + approval widgets
 - [ ] Team/shared workspaces
 - [ ] Light theme
