@@ -24,9 +24,11 @@ export function normalizeCwd(raw: string, platform: string): string | null {
   let path: string;
 
   // ── 1. Parse file:// URLs ──
+  let fileUrlHost = '';
   if (raw.startsWith('file://')) {
     try {
       const url = new URL(raw);
+      fileUrlHost = url.host;
       path = decodeURIComponent(url.pathname);
     } catch {
       // Malformed URL — try treating the remainder as a path
@@ -39,6 +41,18 @@ export function normalizeCwd(raw: string, platform: string): string | null {
 
   // ── 2. Windows-specific normalization ──
   if (platform === 'windows') {
+    // Reconstruct UNC path from file://server/share/… URLs.
+    // new URL('file://server/share') sets host='server', pathname='/share',
+    // losing the host. If the pathname doesn't start with a drive letter,
+    // this is a UNC path — reconstruct \\server\pathname.
+    if (
+      fileUrlHost &&
+      !/^\/[A-Za-z]:/.test(path) &&
+      !/^\/[A-Za-z]\//.test(path)
+    ) {
+      path = `\\\\${fileUrlHost}${path.replace(/\//g, '\\')}`;
+    }
+
     // Strip leading slash before a drive letter: /C:/… → C:/…
     path = path.replace(/^\/([A-Za-z]):/, '$1:');
 

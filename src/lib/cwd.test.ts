@@ -100,6 +100,30 @@ describe('normalizeCwd — windows', () => {
     );
   });
 
+  // UNC via file:// URLs (OSC-7 from network shares)
+  it('converts file://server/share to \\\\server\\share', () => {
+    expect(normalizeCwd('file://server/share', win)).toBe('\\\\server\\share');
+  });
+
+  it('converts file://server/share/folder to \\\\server\\share\\folder', () => {
+    expect(normalizeCwd('file://server/share/folder', win)).toBe(
+      '\\\\server\\share\\folder',
+    );
+  });
+
+  it('converts file://server/share/folder/sub to \\\\server\\share\\folder\\sub', () => {
+    expect(normalizeCwd('file://server/share/folder/sub', win)).toBe(
+      '\\\\server\\share\\folder\\sub',
+    );
+  });
+
+  it('does not treat file://HOST/c/... as UNC (drive-letter path)', () => {
+    // file://HOST/c/Users/brayd → should still produce C:\Users\brayd
+    expect(normalizeCwd('file://HOST/c/Users/brayd', win)).toBe(
+      'C:\\Users\\brayd',
+    );
+  });
+
   it('converts WSL /mnt/c paths to drive-letter paths', () => {
     expect(normalizeCwd('/mnt/c/Users/brayd', win)).toBe('C:\\Users\\brayd');
   });
