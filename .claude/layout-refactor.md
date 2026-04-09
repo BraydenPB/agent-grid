@@ -1,8 +1,9 @@
 # Layout System Refactor — Context for Future Sessions
 
-Status: P0 + P1 complete (2026-04-07)
+Status: Complete (all P0 + P1 items shipped in v0.1.0-beta.1)
 Previous work: Dead code cleanup, referenceId fix, preset rearrangement (branch: claude/fix-terminal-bugs-gH32X)
 P0-P1 implementation: commit f345ae4
+Note: P2 items moved to .claude/v1-roadmap.md. This file retained as architecture reference.
 
 ## What Was Done (2026-04-07)
 
