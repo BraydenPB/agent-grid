@@ -676,6 +676,7 @@ export function TerminalPane({
         )}
         style={{ '--accent-1': effectiveColor } as React.CSSProperties}
         onDoubleClick={handleHeaderDoubleClick}
+        title="Double-click to maximize"
       >
         <div className="flex min-w-0 items-center gap-2">
           {/* Pane number badge */}

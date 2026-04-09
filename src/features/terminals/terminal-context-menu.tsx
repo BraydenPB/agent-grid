@@ -278,6 +278,7 @@ export function TerminalContextMenu({
               'flex w-full items-center gap-2 px-2.5 py-[5px] text-left text-[11px]',
               'text-zinc-200 transition-colors duration-100 hover:bg-white/[0.04]',
             )}
+            aria-label="Switch profile"
           >
             <span
               className="h-[5px] w-[5px] shrink-0 rounded-full"

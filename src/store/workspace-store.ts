@@ -488,7 +488,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   saveCustomLayout: (name) => {
     const state = get();
-    let dockviewLayout: any = null;
+    let dockviewLayout: unknown = null;
     try {
       if (dockviewApiRef.current)
         dockviewLayout = dockviewApiRef.current.toJSON();
