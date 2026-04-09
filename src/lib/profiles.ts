@@ -77,7 +77,7 @@ export function resolveShellCommand(
     const cmdWithArgs = parts.map(quotePowerShell).join(' ');
     return {
       command: 'powershell.exe',
-      args: ['-NoLogo', '-Command', cmdWithArgs],
+      args: ['-NoLogo', '-Command', `& ${cmdWithArgs}`],
     };
   }
   const cmdWithArgs = parts.map(quoteBash).join(' ');

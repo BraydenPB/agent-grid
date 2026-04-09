@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect, useMemo } from 'react';
+import { useCallback, useRef, useEffect, useMemo, useState } from 'react';
 import {
   DockviewReact,
   type DockviewReadyEvent,
@@ -57,14 +57,16 @@ export function TerminalGrid() {
     maximizedPaneId,
   } = useWorkspaceStore();
 
-  const localDockviewApiRef = useRef<DockviewApi | null>(null);
+  const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
+    null,
+  );
   const previousPanesRef = useRef<string[]>([]);
   const previousLayoutVersionRef = useRef(layoutVersion);
   const programmaticChangeRef = useRef(false);
 
   const handleReady = useCallback(
     (event: DockviewReadyEvent) => {
-      localDockviewApiRef.current = event.api;
+      setLocalDockviewApi(event.api);
       dockviewApiRef.current = event.api;
       previousPanesRef.current = workspace.panes.map((p) => p.id);
       previousLayoutVersionRef.current = layoutVersion;
@@ -127,10 +129,9 @@ export function TerminalGrid() {
 
   // Clear activePreset when user manually rearranges panels in Dockview
   useEffect(() => {
-    const api = localDockviewApiRef.current;
-    if (!api) return;
+    if (!localDockviewApi) return;
 
-    const disposable = api.onDidLayoutChange(() => {
+    const disposable = localDockviewApi.onDidLayoutChange(() => {
       if (programmaticChangeRef.current) return;
       const { activePreset } = useWorkspaceStore.getState();
       if (activePreset) {
@@ -141,11 +142,11 @@ export function TerminalGrid() {
     return () => {
       disposable.dispose();
     };
-  }, []);
+  }, [localDockviewApi]);
 
   // Detect preset/layout change and rearrange via Dockview API
   useEffect(() => {
-    const api = localDockviewApiRef.current;
+    const api = localDockviewApi;
     if (!api) return;
 
     if (layoutVersion !== previousLayoutVersionRef.current) {
@@ -316,11 +317,11 @@ export function TerminalGrid() {
         programmaticChangeRef.current = false;
       });
     }
-  }, [workspace.panes, profiles, layoutVersion]);
+  }, [localDockviewApi, workspace.panes, profiles, layoutVersion]);
 
   // Handle maximize/restore via Dockview API
   useEffect(() => {
-    const api = localDockviewApiRef.current;
+    const api = localDockviewApi;
     if (!api) return;
 
     if (maximizedPaneId) {
@@ -341,7 +342,7 @@ export function TerminalGrid() {
         /* No maximized group */
       }
     }
-  }, [maximizedPaneId]);
+  }, [localDockviewApi, maximizedPaneId]);
 
   // Clean up orphaned registry entries when panes change
   useEffect(() => {
@@ -353,7 +354,7 @@ export function TerminalGrid() {
   useEffect(() => {
     const timer = setTimeout(() => {
       const state = useWorkspaceStore.getState();
-      const api = localDockviewApiRef.current;
+      const api = localDockviewApi;
       let dockviewLayout = null;
       try {
         if (api) dockviewLayout = api.toJSON();
@@ -368,7 +369,7 @@ export function TerminalGrid() {
       );
     }, 500);
     return () => clearTimeout(timer);
-  }, [workspace.panes, maximizedPaneId]);
+  }, [localDockviewApi, workspace.panes, maximizedPaneId]);
 
   const handlePanelClose = useCallback((panelId: string) => {
     useWorkspaceStore.getState().removePane(panelId);
