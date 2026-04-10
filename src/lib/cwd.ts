@@ -24,9 +24,11 @@ export function normalizeCwd(raw: string, platform: string): string | null {
   let path: string;
 
   // ── 1. Parse file:// URLs ──
+  let fileUrlHost = '';
   if (raw.startsWith('file://')) {
     try {
       const url = new URL(raw);
+      fileUrlHost = url.host;
       path = decodeURIComponent(url.pathname);
     } catch {
       // Malformed URL — try treating the remainder as a path
@@ -39,8 +41,26 @@ export function normalizeCwd(raw: string, platform: string): string | null {
 
   // ── 2. Windows-specific normalization ──
   if (platform === 'windows') {
+    // Reconstruct UNC path from file://server/share/… URLs.
+    // new URL('file://server/share') sets host='server', pathname='/share',
+    // losing the host. If the pathname doesn't start with a drive letter,
+    // this is a UNC path — reconstruct \\server\pathname.
+    if (
+      fileUrlHost &&
+      !/^\/[A-Za-z]:/.test(path) &&
+      !/^\/[A-Za-z]\//.test(path)
+    ) {
+      path = `\\\\${fileUrlHost}${path.replace(/\//g, '\\')}`;
+    }
+
     // Strip leading slash before a drive letter: /C:/… → C:/…
     path = path.replace(/^\/([A-Za-z]):/, '$1:');
+
+    // WSL-style: /mnt/c/Users/… → C:\Users\…
+    path = path.replace(
+      /^\/mnt\/([A-Za-z])\//,
+      (_, letter: string) => `${letter.toUpperCase()}:\\`,
+    );
 
     // MSYS/Cygwin-style: /c/Users/… → C:\Users\…
     path = path.replace(
@@ -51,10 +71,26 @@ export function normalizeCwd(raw: string, platform: string): string | null {
     // Normalize remaining forward slashes to backslashes
     path = path.replace(/\//g, '\\');
 
+    // Drive-letter paths with spurious leading backslashes (e.g. //C:/… → \\C:\…)
+    // must be caught before the UNC branch to avoid misclassification.
+    path = path.replace(/^\\+([A-Za-z]:\\)/, '$1');
+
+    // UNC paths: \\server\share\… — valid Windows network paths
+    if (/^\\\\[^\\]+\\[^\\]+/.test(path)) {
+      // Collapse repeated internal backslashes (preserve leading \\)
+      path = '\\\\' + path.slice(2).replace(/\\{2,}/g, '\\');
+      // Strip trailing backslash unless bare \\server\share root
+      const segments = path.slice(2).split('\\').filter(Boolean);
+      if (segments.length > 2 && path.endsWith('\\')) {
+        path = path.slice(0, -1);
+      }
+      return path;
+    }
+
     // Must start with a drive letter after normalization
     if (!/^[A-Za-z]:\\/.test(path)) return null;
 
-    // Collapse repeated backslashes (except the root \\)
+    // Collapse repeated backslashes
     path = path.replace(/\\{2,}/g, '\\');
 
     // Strip trailing backslash (unless root like C:\)
