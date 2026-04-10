@@ -19,7 +19,7 @@ import { dockviewApiRef } from '@/lib/dockview-api';
 import type { TerminalProfile } from '@/types';
 import { TerminalPane } from './terminal-pane';
 
-/** Thin wrapper that subscribes to the store for isActive — keeps Dockview components stable */
+/** Thin wrapper that subscribes to the store for isActive */
 function TerminalPaneWrapper({
   paneId,
   profile,
@@ -31,7 +31,10 @@ function TerminalPaneWrapper({
   cwd?: string;
   onClose: () => void;
 }) {
-  const isActive = useWorkspaceStore((s) => s.activePaneId === paneId);
+  const isActive = useWorkspaceStore((s) => {
+    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+    return ws?.activePaneId === paneId;
+  });
   const setActivePaneId = useWorkspaceStore((s) => s.setActivePaneId);
 
   return (
@@ -47,16 +50,19 @@ function TerminalPaneWrapper({
 }
 
 export function TerminalGrid() {
-  const {
-    workspace,
-    profiles,
-    layoutVersion,
-    showProjectBrowser,
-    setShowProjectBrowser,
-    setChangeDirPaneId,
-    maximizedPaneId,
-    paneWorkspaces,
-  } = useWorkspaceStore();
+  const activeWorkspace = useWorkspaceStore((s) =>
+    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
+  );
+  const profiles = useWorkspaceStore((s) => s.profiles);
+  const layoutVersion = useWorkspaceStore((s) => s.layoutVersion);
+  const showProjectBrowser = useWorkspaceStore((s) => s.showProjectBrowser);
+  const setShowProjectBrowser = useWorkspaceStore(
+    (s) => s.setShowProjectBrowser,
+  );
+  const setChangeDirPaneId = useWorkspaceStore((s) => s.setChangeDirPaneId);
+
+  const panes = activeWorkspace?.panes ?? [];
+  const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
 
   const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
     null,
@@ -69,12 +75,11 @@ export function TerminalGrid() {
     (event: DockviewReadyEvent) => {
       setLocalDockviewApi(event.api);
       dockviewApiRef.current = event.api;
-      previousPanesRef.current = workspace.panes.map((p) => p.id);
+      previousPanesRef.current = panes.map((p) => p.id);
       previousLayoutVersionRef.current = layoutVersion;
 
-      // Add existing panes to dockview with positioning
       const addedIds = new Set<string>();
-      workspace.panes.forEach((pane, index) => {
+      panes.forEach((pane, index) => {
         const profile =
           profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
 
@@ -82,14 +87,9 @@ export function TerminalGrid() {
           id: pane.id,
           component: 'terminal',
           title: profile.name,
-          params: {
-            paneId: pane.id,
-            profile,
-            cwd: pane.cwd,
-          },
+          params: { paneId: pane.id, profile, cwd: pane.cwd },
         };
 
-        // Use preset positioning if available — but only if the reference exists
         if (
           pane.dockviewPosition?.direction &&
           pane.dockviewPosition.referenceId &&
@@ -100,8 +100,7 @@ export function TerminalGrid() {
             direction: pane.dockviewPosition.direction,
           };
         } else if (index > 0 && addedIds.size > 0) {
-          // Fallback: split right from previous added pane
-          const prevPane = workspace.panes[index - 1];
+          const prevPane = panes[index - 1];
           if (prevPane && addedIds.has(prevPane.id)) {
             addPanelConfig.position = {
               referencePanel: prevPane.id,
@@ -114,7 +113,6 @@ export function TerminalGrid() {
           event.api.addPanel(addPanelConfig);
           addedIds.add(pane.id);
         } catch {
-          // Reference panel missing — add without position
           try {
             delete addPanelConfig.position;
             event.api.addPanel(addPanelConfig);
@@ -125,18 +123,23 @@ export function TerminalGrid() {
         }
       });
     },
-    [workspace.panes, profiles, layoutVersion],
+    [panes, profiles, layoutVersion],
   );
 
-  // Clear activePreset when user manually rearranges panels in Dockview
+  // Clear activePreset when user manually rearranges panels
   useEffect(() => {
     if (!localDockviewApi) return;
 
     const disposable = localDockviewApi.onDidLayoutChange(() => {
       if (programmaticChangeRef.current) return;
-      const { activePreset } = useWorkspaceStore.getState();
-      if (activePreset) {
-        useWorkspaceStore.setState({ activePreset: null });
+      const state = useWorkspaceStore.getState();
+      const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+      if (ws?.activePreset) {
+        useWorkspaceStore.setState((s) => ({
+          workspaces: s.workspaces.map((w) =>
+            w.id === s.activeWorkspaceId ? { ...w, activePreset: null } : w,
+          ),
+        }));
       }
     });
 
@@ -145,7 +148,7 @@ export function TerminalGrid() {
     };
   }, [localDockviewApi]);
 
-  // Detect preset/layout change and rearrange via Dockview API
+  // Detect layout version change (preset applied or workspace switch) — rearrange Dockview
   useEffect(() => {
     const api = localDockviewApi;
     if (!api) return;
@@ -154,9 +157,6 @@ export function TerminalGrid() {
       previousLayoutVersionRef.current = layoutVersion;
       programmaticChangeRef.current = true;
 
-      // Layout version bumped (preset applied) — rearrange without full remount.
-      // Remove all existing panels from Dockview, then re-add with new positions.
-      // Terminal instances survive in the registry.
       try {
         api.clear();
       } catch {
@@ -164,7 +164,7 @@ export function TerminalGrid() {
       }
 
       const reAddedIds = new Set<string>();
-      workspace.panes.forEach((pane, index) => {
+      panes.forEach((pane, index) => {
         const profile =
           profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
 
@@ -172,11 +172,7 @@ export function TerminalGrid() {
           id: pane.id,
           component: 'terminal',
           title: profile.name,
-          params: {
-            paneId: pane.id,
-            profile,
-            cwd: pane.cwd,
-          },
+          params: { paneId: pane.id, profile, cwd: pane.cwd },
         };
 
         if (
@@ -189,7 +185,7 @@ export function TerminalGrid() {
             direction: pane.dockviewPosition.direction,
           };
         } else if (index > 0) {
-          const prevPane = workspace.panes[index - 1];
+          const prevPane = panes[index - 1];
           if (prevPane && reAddedIds.has(prevPane.id)) {
             addPanelConfig.position = {
               referencePanel: prevPane.id,
@@ -212,7 +208,7 @@ export function TerminalGrid() {
         }
       });
 
-      previousPanesRef.current = workspace.panes.map((p) => p.id);
+      previousPanesRef.current = panes.map((p) => p.id);
       requestAnimationFrame(() => {
         programmaticChangeRef.current = false;
       });
@@ -220,7 +216,7 @@ export function TerminalGrid() {
     }
 
     // Normal incremental sync — add/remove individual panes
-    const currentPaneIds = workspace.panes.map((p) => p.id);
+    const currentPaneIds = panes.map((p) => p.id);
     const hasChanges =
       currentPaneIds.length !== previousPanesRef.current.length ||
       currentPaneIds.some((id, i) => id !== previousPanesRef.current[i]);
@@ -238,7 +234,6 @@ export function TerminalGrid() {
       } catch {
         // Panel may already be gone
       }
-      // Truly destroy the terminal — pane was closed by user
       destroyTerminalEntry(id);
       usePaneStatusStore.getState().removeStatus(id);
     });
@@ -249,25 +244,19 @@ export function TerminalGrid() {
     );
 
     newPaneIds.forEach((paneId) => {
-      const pane = workspace.panes.find((p) => p.id === paneId);
+      const pane = panes.find((p) => p.id === paneId);
       if (!pane) return;
 
       const profile =
         profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
-      const index = workspace.panes.indexOf(pane);
 
       const addPanelConfig: any = {
         id: pane.id,
         component: 'terminal',
         title: profile.name,
-        params: {
-          paneId: pane.id,
-          profile,
-          cwd: pane.cwd,
-        },
+        params: { paneId: pane.id, profile, cwd: pane.cwd },
       };
 
-      // Position the new panel — verify references exist before using them
       const panelExists = (id: string) => {
         try {
           return !!api.getPanel(id);
@@ -290,7 +279,7 @@ export function TerminalGrid() {
           referencePanel: pane.dockviewPosition.referenceId,
           direction: pane.dockviewPosition.direction,
         };
-      } else if (index > 0) {
+      } else {
         const prevId = currentPaneIds[currentPaneIds.indexOf(paneId) - 1];
         if (prevId && panelExists(prevId)) {
           addPanelConfig.position = {
@@ -318,7 +307,7 @@ export function TerminalGrid() {
         programmaticChangeRef.current = false;
       });
     }
-  }, [localDockviewApi, workspace.panes, profiles, layoutVersion]);
+  }, [localDockviewApi, panes, profiles, layoutVersion]);
 
   // Handle maximize/restore via Dockview API
   useEffect(() => {
@@ -328,62 +317,55 @@ export function TerminalGrid() {
     if (maximizedPaneId) {
       try {
         const panel = api.getPanel(maximizedPaneId);
-        if (panel) {
-          api.maximizeGroup(panel);
-        }
+        if (panel) api.maximizeGroup(panel);
       } catch {
         /* Panel may not exist */
       }
     } else {
       try {
-        if (api.hasMaximizedGroup()) {
-          api.exitMaximizedGroup();
-        }
+        if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
       } catch {
         /* No maximized group */
       }
     }
   }, [localDockviewApi, maximizedPaneId]);
 
-  // Clean up orphaned registry entries when panes change
+  // Clean up orphaned registry entries — consider ALL workspaces' panes as alive
   useEffect(() => {
-    const activePaneIds = workspace.panes.map((p) => p.id);
-    // Include inner pane IDs from all nested workspaces
-    for (const pw of Object.values(paneWorkspaces)) {
-      for (const inner of pw.panes) {
-        activePaneIds.push(inner.id);
-      }
-    }
-    cleanupOrphanedEntries(activePaneIds);
-  }, [workspace.panes, paneWorkspaces]);
+    const allPaneIds = useWorkspaceStore
+      .getState()
+      .workspaces.flatMap((w) => w.panes.map((p) => p.id));
+    cleanupOrphanedEntries(allPaneIds);
+  }, [panes]);
 
   // Debounced layout save to localStorage
   useEffect(() => {
     const timer = setTimeout(() => {
       const state = useWorkspaceStore.getState();
       const api = localDockviewApi;
-      let dockviewLayout = null;
-      try {
-        if (api) dockviewLayout = api.toJSON();
-      } catch {
-        /* ignore */
+
+      // Update active workspace's Dockview layout before saving
+      let workspaces = state.workspaces;
+      if (api && state.activeWorkspaceId) {
+        try {
+          const dockviewLayout = api.toJSON();
+          workspaces = workspaces.map((w) =>
+            w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
+          );
+        } catch {
+          /* ignore */
+        }
       }
-      saveLayout(
-        state.workspace.panes,
-        state.activePaneId,
-        state.activePreset,
-        dockviewLayout,
-        state.paneWorkspaces,
-      );
+
+      saveLayout(workspaces, state.activeWorkspaceId);
     }, 500);
     return () => clearTimeout(timer);
-  }, [localDockviewApi, workspace.panes, maximizedPaneId, paneWorkspaces]);
+  }, [localDockviewApi, panes, maximizedPaneId]);
 
   const handlePanelClose = useCallback((panelId: string) => {
     useWorkspaceStore.getState().removePane(panelId);
   }, []);
 
-  // Stable component reference — TerminalPane subscribes to store for isActive
   const components = useMemo(
     () => ({
       terminal: (
@@ -404,7 +386,7 @@ export function TerminalGrid() {
     [handlePanelClose],
   );
 
-  if (workspace.panes.length === 0) {
+  if (panes.length === 0) {
     return <ProjectBrowser />;
   }
 
@@ -416,7 +398,6 @@ export function TerminalGrid() {
         disableFloatingGroups
         className="h-full w-full"
       />
-      {/* Project browser overlay */}
       <AnimatePresence>
         {showProjectBrowser && (
           <ProjectBrowser

@@ -2,22 +2,26 @@ import { useEffect } from 'react';
 import { useWorkspaceStore } from '@/store/workspace-store';
 
 /**
- * Global keyboard shortcuts for pane management.
+ * Global keyboard shortcuts.
  *
  * Ctrl+T           — New shell terminal
- * Ctrl+W           — Close active pane (when no selection in terminal)
- * Ctrl+K           — Toggle project browser (command palette)
+ * Ctrl+N           — New workspace tab
+ * Ctrl+W           — Close active pane
+ * Ctrl+K           — Toggle project browser
  * Ctrl+Tab / Ctrl+] — Focus next pane
  * Ctrl+Shift+Tab / Ctrl+[ — Focus previous pane
- * Alt+1–9          — Focus pane by index
+ * Ctrl+PgDown      — Next workspace tab
+ * Ctrl+PgUp        — Previous workspace tab
+ * Alt+1-9          — Focus pane by index
  * Ctrl+Enter       — Maximize/restore active pane
  * Ctrl+Shift+P     — Toggle command palette
- * Escape           — Exit maximized mode, close palette, or close project browser
+ * Escape           — Exit maximized mode, close palette, close project browser
  */
 export function useGlobalShortcuts() {
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       const store = useWorkspaceStore.getState();
+      const ws = store.workspaces.find((w) => w.id === store.activeWorkspaceId);
 
       // Escape — close command palette, exit maximize, or close project browser
       if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
@@ -26,9 +30,9 @@ export function useGlobalShortcuts() {
           store.setShowCommandPalette(false);
           return;
         }
-        if (store.maximizedPaneId) {
+        if (ws?.maximizedPaneId) {
           e.preventDefault();
-          store.toggleMaximize(store.maximizedPaneId);
+          store.toggleMaximize(ws.maximizedPaneId);
           return;
         }
         if (store.showProjectBrowser) {
@@ -45,19 +49,25 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Ctrl+T — New shell terminal
+      // Ctrl+T — New shell terminal (in active workspace)
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 't') {
         e.preventDefault();
         store.addPane('system-shell', 'right');
         return;
       }
 
+      // Ctrl+N — New workspace tab
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'n') {
+        e.preventDefault();
+        store.addWorkspace('Workspace');
+        return;
+      }
+
       // Ctrl+W — Close active pane
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'w') {
-        // Only intercept if we have panes
-        if (store.workspace.panes.length > 0 && store.activePaneId) {
+        if (ws && ws.panes.length > 0 && ws.activePaneId) {
           e.preventDefault();
-          store.removePane(store.activePaneId);
+          store.removePane(ws.activePaneId);
           return;
         }
       }
@@ -86,7 +96,21 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Alt+1–9 — Focus pane by index
+      // Ctrl+PgDown — Next workspace tab
+      if (e.ctrlKey && !e.shiftKey && e.key === 'PageDown') {
+        e.preventDefault();
+        store.nextWorkspace();
+        return;
+      }
+
+      // Ctrl+PgUp — Previous workspace tab
+      if (e.ctrlKey && !e.shiftKey && e.key === 'PageUp') {
+        e.preventDefault();
+        store.prevWorkspace();
+        return;
+      }
+
+      // Alt+1-9 — Focus pane by index
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
         const num = parseInt(e.key, 10);
         if (num >= 1 && num <= 9) {
@@ -115,11 +139,11 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Ctrl+Enter or Ctrl+Shift+Enter — Maximize/restore active pane
+      // Ctrl+Enter — Maximize/restore active pane
       if (e.ctrlKey && e.key === 'Enter') {
         e.preventDefault();
-        if (store.activePaneId) {
-          store.toggleMaximize(store.activePaneId);
+        if (ws?.activePaneId) {
+          store.toggleMaximize(ws.activePaneId);
         }
         return;
       }

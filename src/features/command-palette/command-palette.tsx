@@ -63,7 +63,8 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        if (s.activePaneId) s.removePane(s.activePaneId);
+        const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+        if (ws?.activePaneId) s.removePane(ws.activePaneId);
       },
     },
     {
@@ -74,8 +75,14 @@ function buildActions(): PaletteAction[] {
       action: () => {
         const s = store();
         const profileId =
-          s.workspace.panes.find((p) => p.id === s.activePaneId)?.profileId ??
-          'system-shell';
+          s.workspaces
+            .find((w) => w.id === s.activeWorkspaceId)
+            ?.panes.find(
+              (p) =>
+                p.id ===
+                s.workspaces.find((w) => w.id === s.activeWorkspaceId)
+                  ?.activePaneId,
+            )?.profileId ?? 'system-shell';
         s.addPane(profileId, 'right');
       },
     },
@@ -87,8 +94,14 @@ function buildActions(): PaletteAction[] {
       action: () => {
         const s = store();
         const profileId =
-          s.workspace.panes.find((p) => p.id === s.activePaneId)?.profileId ??
-          'system-shell';
+          s.workspaces
+            .find((w) => w.id === s.activeWorkspaceId)
+            ?.panes.find(
+              (p) =>
+                p.id ===
+                s.workspaces.find((w) => w.id === s.activeWorkspaceId)
+                  ?.activePaneId,
+            )?.profileId ?? 'system-shell';
         s.addPane(profileId, 'below');
       },
     },
@@ -99,7 +112,8 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        if (s.activePaneId) s.toggleMaximize(s.activePaneId);
+        const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+        if (ws?.activePaneId) s.toggleMaximize(ws.activePaneId);
       },
     },
     {

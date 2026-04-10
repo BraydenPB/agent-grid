@@ -21,7 +21,6 @@ import {
   ChevronRight,
   ChevronLeft,
   Palette,
-  LayoutGrid,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
@@ -77,8 +76,6 @@ interface TerminalContextMenuProps {
   onSplitRight: () => void;
   onSplitBelow: () => void;
   onClose_pane: () => void;
-  /** When set, this pane is inside a nested workspace — hide "Convert to Workspace" */
-  innerContext?: { parentPaneId: string };
 }
 
 export function TerminalContextMenu({
@@ -100,33 +97,22 @@ export function TerminalContextMenu({
   onSplitRight,
   onSplitBelow,
   onClose_pane,
-  innerContext,
 }: TerminalContextMenuProps) {
-  // Single source of truth: all profile data from the store
   const profiles = useWorkspaceStore((s) => s.profiles);
   const updatePaneColor = useWorkspaceStore((s) => s.updatePaneColor);
-  const updateInnerPaneColor = useWorkspaceStore((s) => s.updateInnerPaneColor);
   const paneColorOverride = useWorkspaceStore((s) => {
-    if (innerContext) {
-      const pw = s.paneWorkspaces[innerContext.parentPaneId];
-      return pw?.panes.find((p) => p.id === paneId)?.colorOverride;
-    }
-    return s.workspace.panes.find((p) => p.id === paneId)?.colorOverride;
+    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+    return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
   });
   const currentProfile =
     profiles.find((p) => p.id === profileId) ?? profiles[0]!;
   const effectiveColor = paneColorOverride ?? currentProfile.color ?? '#6b7280';
 
-  // Route color updates to the correct store action
   const handleColorUpdate = useCallback(
     (color: string) => {
-      if (innerContext) {
-        updateInnerPaneColor(innerContext.parentPaneId, paneId, color);
-      } else {
-        updatePaneColor(paneId, color);
-      }
+      updatePaneColor(paneId, color);
     },
-    [innerContext, paneId, updatePaneColor, updateInnerPaneColor],
+    [paneId, updatePaneColor],
   );
 
   const menuRef = useRef<HTMLDivElement>(null);
@@ -597,14 +583,6 @@ export function TerminalContextMenu({
           </div>
         )}
 
-        {/* Convert to/from workspace — only for outer panes */}
-        {!innerContext && (
-          <>
-            <Sep />
-            <ConvertToWorkspaceItem paneId={paneId} onClose={onClose} />
-          </>
-        )}
-
         <Sep />
 
         {/* Layout */}
@@ -671,56 +649,6 @@ export function TerminalContextMenu({
 }
 
 /* ── Workspace toggle ── */
-
-function ConvertToWorkspaceItem({
-  paneId,
-  onClose,
-}: {
-  paneId: string;
-  onClose: () => void;
-}) {
-  const paneMode = useWorkspaceStore(
-    (s) => s.workspace.panes.find((p) => p.id === paneId)?.mode ?? 'single',
-  );
-  const createPaneWorkspace = useWorkspaceStore((s) => s.createPaneWorkspace);
-  const removePaneWorkspace = useWorkspaceStore((s) => s.removePaneWorkspace);
-  const innerPaneCount = useWorkspaceStore(
-    (s) => s.paneWorkspaces[paneId]?.panes.length ?? 0,
-  );
-
-  if (paneMode === 'workspace') {
-    return (
-      <Item
-        icon={<TerminalSquare size={12} />}
-        label="Unsplit Group"
-        onClick={() => {
-          if (
-            innerPaneCount >= 1 &&
-            !window.confirm(
-              `This will close ${innerPaneCount} terminal${innerPaneCount !== 1 ? 's' : ''} in this group and revert to a single terminal. Continue?`,
-            )
-          ) {
-            return;
-          }
-          removePaneWorkspace(paneId);
-          onClose();
-        }}
-      />
-    );
-  }
-
-  return (
-    <Item
-      icon={<LayoutGrid size={12} />}
-      label="Split into Group"
-      hint="Nest terminals"
-      onClick={() => {
-        createPaneWorkspace(paneId);
-        onClose();
-      }}
-    />
-  );
-}
 
 /* ── Primitives ── */
 

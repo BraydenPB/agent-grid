@@ -1,7 +1,11 @@
 import { useWorkspaceStore } from '@/store/workspace-store';
 
 export function AppBar() {
-  const { workspace } = useWorkspaceStore();
+  const activeWorkspace = useWorkspaceStore((s) =>
+    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
+  );
+  const name = activeWorkspace?.name ?? 'Agent Grid';
+  const paneCount = activeWorkspace?.panes.length ?? 0;
 
   return (
     <header
@@ -13,12 +17,11 @@ export function AppBar() {
           Agent Grid
         </span>
         <span className="text-xs text-zinc-500">|</span>
-        <span className="text-xs text-zinc-400">{workspace.name}</span>
+        <span className="text-xs text-zinc-400">{name}</span>
       </div>
       <div className="flex items-center gap-3">
         <span className="text-xs text-zinc-500">
-          {workspace.panes.length}{' '}
-          {workspace.panes.length === 1 ? 'pane' : 'panes'}
+          {paneCount} {paneCount === 1 ? 'pane' : 'panes'}
         </span>
       </div>
     </header>

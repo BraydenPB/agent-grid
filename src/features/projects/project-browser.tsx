@@ -80,8 +80,8 @@ export function ProjectBrowser({
     projectsPath,
     addPane,
     addPaneWithCwd,
+    addWorkspace,
     applyPreset,
-    setShowProjectBrowser,
     changeDirPaneId,
     setChangeDirPaneId,
     setPendingCwd,
@@ -142,9 +142,14 @@ export function ProjectBrowser({
         onClose?.();
         return;
       }
-      addPaneWithCwd(profile.id, project.path);
-      if (overlay) onClose?.();
-      else setShowProjectBrowser(false);
+      if (overlay) {
+        // Overlay mode — add pane to current workspace
+        addPaneWithCwd(profile.id, project.path);
+        onClose?.();
+      } else {
+        // Full-page mode — create a new workspace tab
+        addWorkspace(project.name, project.path, profile.id);
+      }
     },
     [
       changeDirPaneId,
@@ -153,8 +158,8 @@ export function ProjectBrowser({
       setChangeDirPaneId,
       onClose,
       addPaneWithCwd,
+      addWorkspace,
       overlay,
-      setShowProjectBrowser,
     ],
   );
 

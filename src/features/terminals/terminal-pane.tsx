@@ -31,7 +31,6 @@ import type { TerminalProfile } from '@/types';
 import { cn } from '@/lib/utils';
 import { TerminalSearch } from './terminal-search';
 import { TerminalContextMenu } from './terminal-context-menu';
-import { NestedWorkspaceGrid } from './nested-workspace-grid';
 
 /* ── Constants ── */
 const FONT_SIZE_MIN = 8;
@@ -72,8 +71,6 @@ interface TerminalPaneProps {
   onClose: () => void;
   paneId: string;
   initialCwd?: string;
-  /** When set, this pane lives inside a nested workspace grid */
-  innerContext?: { parentPaneId: string };
 }
 
 const IDLE_TIMEOUT_MS = 3000;
@@ -85,15 +82,7 @@ export function TerminalPane({
   onClose,
   paneId,
   initialCwd,
-  innerContext,
 }: TerminalPaneProps) {
-  // Check if this outer pane is in workspace mode
-  const paneMode = useWorkspaceStore(
-    (s) =>
-      !innerContext
-        ? (s.workspace.panes.find((p) => p.id === paneId)?.mode ?? 'single')
-        : 'single', // Inner panes are always single
-  );
   const containerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<TerminalEntry | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -114,51 +103,26 @@ export function TerminalPane({
     visible: false,
   });
   const [cwd, setCwd] = useState<string>(initialCwd || '');
-  const profiles = useWorkspaceStore(
-    (s: { profiles: TerminalProfile[] }) => s.profiles,
-  );
+  const profiles = useWorkspaceStore((s) => s.profiles);
   const paneProfileId = useWorkspaceStore((s) => {
-    if (innerContext) {
-      const pw = s.paneWorkspaces[innerContext.parentPaneId];
-      return (
-        pw?.panes.find((p) => p.id === paneId)?.profileId ?? initialProfile.id
-      );
-    }
+    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
     return (
-      s.workspace.panes.find((p) => p.id === paneId)?.profileId ??
-      initialProfile.id
+      ws?.panes.find((p) => p.id === paneId)?.profileId ?? initialProfile.id
     );
   });
-  const updatePaneProfile = useWorkspaceStore(
-    (s: { updatePaneProfile: (paneId: string, profileId: string) => void }) =>
-      s.updatePaneProfile,
-  );
-  const updateInnerPaneProfile = useWorkspaceStore(
-    (s) => s.updateInnerPaneProfile,
-  );
-  // Derive activeProfile from store — single source of truth for color etc.
+  const updatePaneProfile = useWorkspaceStore((s) => s.updatePaneProfile);
   const activeProfile =
     profiles.find((p) => p.id === paneProfileId) ?? initialProfile;
-  // Per-pane color override takes precedence over profile color
   const paneColorOverride = useWorkspaceStore((s) => {
-    if (innerContext) {
-      const pw = s.paneWorkspaces[innerContext.parentPaneId];
-      return pw?.panes.find((p) => p.id === paneId)?.colorOverride;
-    }
-    return s.workspace.panes.find((p) => p.id === paneId)?.colorOverride;
+    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+    return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
   });
   const effectiveColor = paneColorOverride ?? activeProfile.color ?? '#636d83';
 
-  const toggleMaximize = useWorkspaceStore(
-    (s: { toggleMaximize: (id: string) => void }) => s.toggleMaximize,
-  );
-  const toggleInnerMaximize = useWorkspaceStore((s) => s.toggleInnerMaximize);
+  const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
   const isMaximized = useWorkspaceStore((s) => {
-    if (innerContext) {
-      const pw = s.paneWorkspaces[innerContext.parentPaneId];
-      return pw?.maximizedPaneId === paneId;
-    }
-    return s.maximizedPaneId === paneId;
+    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+    return ws?.maximizedPaneId === paneId;
   });
 
   /* ── Addon loading ── */
@@ -242,35 +206,11 @@ export function TerminalPane({
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'D' && e.type === 'keydown') {
-          const store = useWorkspaceStore.getState();
-          if (innerContext) {
-            store.addInnerPane(
-              innerContext.parentPaneId,
-              initialProfile.id,
-              'right',
-            );
-          } else {
-            const currentPane = store.workspace.panes.find(
-              (p) => p.id === paneId,
-            );
-            store.addPane(currentPane?.profileId ?? initialProfile.id, 'right');
-          }
+          useWorkspaceStore.getState().addPane(initialProfile.id, 'right');
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'E' && e.type === 'keydown') {
-          const store = useWorkspaceStore.getState();
-          if (innerContext) {
-            store.addInnerPane(
-              innerContext.parentPaneId,
-              initialProfile.id,
-              'below',
-            );
-          } else {
-            const currentPane = store.workspace.panes.find(
-              (p) => p.id === paneId,
-            );
-            store.addPane(currentPane?.profileId ?? initialProfile.id, 'below');
-          }
+          useWorkspaceStore.getState().addPane(initialProfile.id, 'below');
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'W' && e.type === 'keydown') {
@@ -303,7 +243,7 @@ export function TerminalPane({
         return true;
       });
     },
-    [initialProfile.id, onClose, paneId, innerContext],
+    [initialProfile.id, onClose],
   );
 
   /* ── Font zoom ── */
@@ -336,8 +276,7 @@ export function TerminalPane({
         const normalized = normalizeCwd(data, getPlatform());
         if (normalized) {
           setCwd(normalized);
-          // Push to store so tab strip can show live CWD
-          if (!innerContext) updatePaneCwd(paneId, normalized);
+          updatePaneCwd(paneId, normalized);
         }
         return true;
       });
@@ -346,7 +285,7 @@ export function TerminalPane({
       term.parser.registerOscHandler(0, () => false);
       term.parser.registerOscHandler(2, () => false);
     },
-    [innerContext, paneId, updatePaneCwd],
+    [paneId, updatePaneCwd],
   );
 
   /* ── Status helpers ── */
@@ -402,8 +341,11 @@ export function TerminalPane({
           if (!processExitedRef.current) {
             const currentStatus =
               usePaneStatusStore.getState().statuses[paneId];
-            const isCurrentlyActive =
-              useWorkspaceStore.getState().activePaneId === paneId;
+            const wsState = useWorkspaceStore.getState();
+            const activeWs = wsState.workspaces.find(
+              (w) => w.id === wsState.activeWorkspaceId,
+            );
+            const isCurrentlyActive = activeWs?.activePaneId === paneId;
             if (!isCurrentlyActive && currentStatus !== 'attention') {
               setStatus(paneId, 'attention');
             } else if (isCurrentlyActive && currentStatus !== 'working') {
@@ -455,15 +397,7 @@ export function TerminalPane({
       const entry = entryRef.current;
       if (!entry) return;
 
-      if (innerContext) {
-        updateInnerPaneProfile(
-          innerContext.parentPaneId,
-          paneId,
-          newProfile.id,
-        );
-      } else {
-        updatePaneProfile(paneId, newProfile.id);
-      }
+      updatePaneProfile(paneId, newProfile.id);
       entry.profileId = newProfile.id;
       entry.terminal.clear();
       entry.terminal.reset();
@@ -474,14 +408,7 @@ export function TerminalPane({
       await spawnProcess(entry, newProfile, cwd || undefined);
       entry.terminal.focus();
     },
-    [
-      spawnProcess,
-      cwd,
-      paneId,
-      updatePaneProfile,
-      updateInnerPaneProfile,
-      innerContext,
-    ],
+    [spawnProcess, cwd, paneId, updatePaneProfile],
   );
 
   /* ── Directory changing ── */
@@ -543,12 +470,8 @@ export function TerminalPane({
 
   /* ── Double-click header to maximize/restore ── */
   const handleHeaderDoubleClick = useCallback(() => {
-    if (innerContext) {
-      toggleInnerMaximize(innerContext.parentPaneId, paneId);
-    } else {
-      toggleMaximize(paneId);
-    }
-  }, [paneId, toggleMaximize, toggleInnerMaximize, innerContext]);
+    toggleMaximize(paneId);
+  }, [paneId, toggleMaximize]);
 
   /* ── Terminal initialization / reattachment ── */
   useEffect(() => {
@@ -707,7 +630,7 @@ export function TerminalPane({
         entryRef.current = null;
       }
     };
-  }, [paneId, paneMode]); // Re-run on paneId change or mode switch (workspace↔single)
+  }, [paneId]); // Only re-run if paneId changes (never during rearrange)
 
   useEffect(() => {
     if (entryRef.current) {
@@ -726,51 +649,6 @@ export function TerminalPane({
   }, [isActive, paneId, paneStatus, setStatus]);
 
   const cwdLabel = cwd ? cwd.split(/[\\/]/).pop() : '';
-
-  // Workspace mode — render nested grid instead of terminal.
-  // No extra header — inner panes have their own headers via TerminalPane.
-  if (paneMode === 'workspace' && !innerContext) {
-    return (
-      <div
-        role="application"
-        aria-label={`Split Group: ${activeProfile.name}`}
-        className="relative flex h-full flex-col overflow-hidden"
-        style={{ background: '#0a0a0f' }}
-        onMouseDown={onFocus}
-        onContextMenu={handleContextMenu}
-      >
-        <div className="min-h-0 flex-1">
-          <NestedWorkspaceGrid parentPaneId={paneId} />
-        </div>
-
-        {/* Context menu — right-click to access "Unsplit" */}
-        <TerminalContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          visible={contextMenu.visible}
-          onClose={() => setContextMenu((s) => ({ ...s, visible: false }))}
-          onCopy={() => {}}
-          onPaste={() => {}}
-          onClear={() => {}}
-          onSearch={() => {}}
-          onReset={() => {}}
-          hasSelection={false}
-          profileId={activeProfile.id}
-          paneId={paneId}
-          onSwitchProfile={() => {}}
-          cwd=""
-          onChangeDirectory={() => {}}
-          onSplitRight={() =>
-            useWorkspaceStore.getState().addPane(activeProfile.id, 'right')
-          }
-          onSplitBelow={() =>
-            useWorkspaceStore.getState().addPane(activeProfile.id, 'below')
-          }
-          onClose_pane={onClose}
-        />
-      </div>
-    );
-  }
 
   return (
     <div
@@ -880,50 +758,40 @@ export function TerminalPane({
         {/* Header actions — always visible */}
         <div className="flex shrink-0 items-center gap-0.5">
           {/* Split buttons — visible on hover */}
-          {!innerContext && (
-            <div
-              className={cn(
-                'flex items-center gap-0.5 transition-opacity duration-100',
-                'opacity-0 group-hover:opacity-100',
-              )}
+          <div
+            className={cn(
+              'flex items-center gap-0.5 transition-opacity duration-100',
+              'opacity-0 group-hover:opacity-100',
+            )}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                useWorkspaceStore.getState().addPane(activeProfile.id, 'right');
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+              title="Split Right (Ctrl+Shift+D)"
             >
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  useWorkspaceStore
-                    .getState()
-                    .addPane(activeProfile.id, 'right');
-                }}
-                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
-                title="Split Right (Ctrl+Shift+D)"
-              >
-                <PanelRight size={10} strokeWidth={1.5} />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  useWorkspaceStore
-                    .getState()
-                    .addPane(activeProfile.id, 'below');
-                }}
-                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
-                title="Split Below (Ctrl+Shift+E)"
-              >
-                <PanelBottom size={10} strokeWidth={1.5} />
-              </button>
-              <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
-            </div>
-          )}
+              <PanelRight size={10} strokeWidth={1.5} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                useWorkspaceStore.getState().addPane(activeProfile.id, 'below');
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+              title="Split Below (Ctrl+Shift+E)"
+            >
+              <PanelBottom size={10} strokeWidth={1.5} />
+            </button>
+            <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
+          </div>
 
           {/* Maximize / Restore */}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              if (innerContext) {
-                toggleInnerMaximize(innerContext.parentPaneId, paneId);
-              } else {
-                toggleMaximize(paneId);
-              }
+              toggleMaximize(paneId);
             }}
             className={cn(
               'flex h-5 w-5 items-center justify-center rounded',
@@ -992,32 +860,13 @@ export function TerminalPane({
         onSwitchProfile={(profile) => void handleSwitchProfile(profile)}
         cwd={cwd}
         onChangeDirectory={handleChangeDirectory}
-        onSplitRight={() => {
-          const store = useWorkspaceStore.getState();
-          if (innerContext) {
-            store.addInnerPane(
-              innerContext.parentPaneId,
-              activeProfile.id,
-              'right',
-            );
-          } else {
-            store.addPane(activeProfile.id, 'right');
-          }
-        }}
-        onSplitBelow={() => {
-          const store = useWorkspaceStore.getState();
-          if (innerContext) {
-            store.addInnerPane(
-              innerContext.parentPaneId,
-              activeProfile.id,
-              'below',
-            );
-          } else {
-            store.addPane(activeProfile.id, 'below');
-          }
-        }}
+        onSplitRight={() =>
+          useWorkspaceStore.getState().addPane(activeProfile.id, 'right')
+        }
+        onSplitBelow={() =>
+          useWorkspaceStore.getState().addPane(activeProfile.id, 'below')
+        }
         onClose_pane={onClose}
-        innerContext={innerContext}
       />
     </div>
   );

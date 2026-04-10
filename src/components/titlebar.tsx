@@ -39,16 +39,20 @@ const dropdownVariants = {
 };
 
 export function Titlebar() {
-  const {
-    workspace,
-    profiles,
-    addPane,
-    setShowProjectBrowser,
-    clearAllPanes,
-    activePaneId,
-    toggleMaximize,
-    maximizedPaneId,
-  } = useWorkspaceStore();
+  const profiles = useWorkspaceStore((s) => s.profiles);
+  const addPane = useWorkspaceStore((s) => s.addPane);
+  const setShowProjectBrowser = useWorkspaceStore(
+    (s) => s.setShowProjectBrowser,
+  );
+  const clearAllPanes = useWorkspaceStore((s) => s.clearAllPanes);
+  const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
+  const activeWorkspace = useWorkspaceStore((s) =>
+    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
+  );
+
+  const activePaneId = activeWorkspace?.activePaneId ?? null;
+  const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
+  const panes = activeWorkspace?.panes ?? [];
 
   const [addOpen, setAddOpen] = useState(false);
   const [layoutOpen, setLayoutOpen] = useState(false);
@@ -57,7 +61,7 @@ export function Titlebar() {
   const layoutRef = useRef<HTMLDivElement>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const hasPanes = workspace.panes.length > 0;
+  const hasPanes = panes.length > 0;
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -229,7 +233,7 @@ export function Titlebar() {
                       shortcut="^\u21E7D"
                       onClick={() => {
                         if (activePaneId) {
-                          const pane = workspace.panes.find(
+                          const pane = panes.find(
                             (p: Pane) => p.id === activePaneId,
                           );
                           if (pane) addPane(pane.profileId, 'right');
@@ -243,7 +247,7 @@ export function Titlebar() {
                       shortcut="^\u21E7E"
                       onClick={() => {
                         if (activePaneId) {
-                          const pane = workspace.panes.find(
+                          const pane = panes.find(
                             (p: Pane) => p.id === activePaneId,
                           );
                           if (pane) addPane(pane.profileId, 'below');
@@ -319,7 +323,7 @@ export function Titlebar() {
             className="mr-1 flex items-center gap-1 px-2"
             data-tauri-drag-region
           >
-            {workspace.panes.map((pane: Pane, i: number) => (
+            {panes.map((pane: Pane, i: number) => (
               <button
                 key={pane.id}
                 onClick={() =>

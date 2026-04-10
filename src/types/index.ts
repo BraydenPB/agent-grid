@@ -9,17 +9,13 @@ export interface TerminalProfile {
   cwd?: string;
 }
 
-export type PaneMode = 'single' | 'workspace';
-
 export interface Pane {
   id: string;
   profileId: string;
   title: string;
-  // 'single' = one terminal, 'workspace' = nested grid of inner terminals
-  mode?: PaneMode;
   // Per-pane color override (takes precedence over profile color)
   colorOverride?: string;
-  // Initial working directory (set from project browser)
+  // Working directory (initial from project browser, live from OSC 7)
   cwd?: string;
   // Dockview positioning — resolved with stable pane IDs
   dockviewPosition?: {
@@ -33,34 +29,16 @@ export interface Pane {
   };
 }
 
-export interface InnerPane {
-  id: string;
-  profileId: string;
-  title: string;
-  colorOverride?: string;
-  cwd?: string;
-  splitFrom?: {
-    paneId: string;
-    direction: 'right' | 'below';
-  };
-  dockviewPosition?: {
-    referenceId?: string;
-    direction?: 'right' | 'below';
-  };
-}
-
-export interface PaneWorkspace {
-  id: string;
-  parentPaneId: string;
-  panes: InnerPane[];
-  maximizedPaneId: string | null;
-  activePaneId: string | null;
-}
-
-export interface Workspace {
+export interface WorkspaceTab {
   id: string;
   name: string;
+  color?: string;
+  cwd?: string;
   panes: Pane[];
+  activePaneId: string | null;
+  maximizedPaneId: string | null;
+  activePreset: string | null;
+  dockviewLayout: unknown;
   createdAt: string;
   updatedAt: string;
 }

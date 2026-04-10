@@ -1,11 +1,5 @@
 import { create } from 'zustand';
-import type {
-  Pane,
-  InnerPane,
-  PaneWorkspace,
-  Workspace,
-  TerminalProfile,
-} from '@/types';
+import type { Pane, WorkspaceTab, TerminalProfile } from '@/types';
 import { DEFAULT_PROFILES } from '@/lib/profiles';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 import { generateId } from '@/lib/utils';
@@ -23,35 +17,87 @@ import {
 import { dockviewApiRef } from '@/lib/dockview-api';
 import { destroyTerminalEntry } from '@/lib/terminal-registry';
 
-interface WorkspaceState {
-  // Current workspace
-  workspace: Workspace;
-  // Available terminal profiles
-  profiles: TerminalProfile[];
-  // Which pane is focused
-  activePaneId: string | null;
-  // Bumped on preset apply to force Dockview remount
-  layoutVersion: number;
-  // Which preset is currently active (null if user modified layout)
-  activePreset: string | null;
-  // Root directory for project browser
-  projectsPath: string;
-  // Whether to show the project browser overlay
-  showProjectBrowser: boolean;
-  // Directory change flow: pane requesting a cwd change via project browser
-  changeDirPaneId: string | null;
-  // Result of a directory change pick
-  pendingCwd: { paneId: string; path: string } | null;
-  // Maximized pane (hides all others via Dockview API)
-  maximizedPaneId: string | null;
-  // Command palette visibility
-  showCommandPalette: boolean;
-  // User-saved named layouts
-  customLayouts: NamedLayout[];
-  // Nested workspaces keyed by outer paneId
-  paneWorkspaces: Record<string, PaneWorkspace>;
+/* ── Helpers ── */
 
-  // Actions
+const defaultProfile = DEFAULT_PROFILES[0]!;
+
+function createPane(profileId: string): Pane {
+  const profile =
+    DEFAULT_PROFILES.find((p) => p.id === profileId) ?? defaultProfile;
+  return { id: generateId(), profileId, title: profile.name };
+}
+
+function createWorkspaceTab(
+  name: string,
+  cwd?: string,
+  initialPaneProfileId?: string,
+): WorkspaceTab {
+  const now = new Date().toISOString();
+  const panes: Pane[] = [];
+  if (initialPaneProfileId) {
+    const pane = createPane(initialPaneProfileId);
+    if (cwd) pane.cwd = cwd;
+    panes.push(pane);
+  }
+  return {
+    id: generateId(),
+    name,
+    cwd,
+    panes,
+    activePaneId: panes[0]?.id ?? null,
+    maximizedPaneId: null,
+    activePreset: null,
+    dockviewLayout: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Get the active workspace from state */
+function getActive(state: WorkspaceState): WorkspaceTab | undefined {
+  return state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+}
+
+/** Immutably update the active workspace */
+function updateActive(
+  state: WorkspaceState,
+  updater: (ws: WorkspaceTab) => Partial<WorkspaceTab>,
+): Partial<WorkspaceState> {
+  const ws = getActive(state);
+  if (!ws) return {};
+  const updates = updater(ws);
+  return {
+    workspaces: state.workspaces.map((w) =>
+      w.id === ws.id
+        ? { ...w, ...updates, updatedAt: new Date().toISOString() }
+        : w,
+    ),
+  };
+}
+
+/* ── State interface ── */
+
+interface WorkspaceState {
+  workspaces: WorkspaceTab[];
+  activeWorkspaceId: string | null;
+  profiles: TerminalProfile[];
+  layoutVersion: number;
+  projectsPath: string;
+  showProjectBrowser: boolean;
+  changeDirPaneId: string | null;
+  pendingCwd: { paneId: string; path: string } | null;
+  showCommandPalette: boolean;
+  customLayouts: NamedLayout[];
+
+  // Workspace tab actions
+  addWorkspace: (name: string, cwd?: string, profileId?: string) => string;
+  removeWorkspace: (id: string) => void;
+  setActiveWorkspace: (id: string) => void;
+  renameWorkspaceTab: (id: string, name: string) => void;
+  nextWorkspace: () => void;
+  prevWorkspace: () => void;
+
+  // Pane actions (scoped to active workspace)
   setActivePaneId: (id: string | null) => void;
   addPane: (profileId: string, direction?: 'right' | 'below') => void;
   addPaneWithCwd: (
@@ -62,82 +108,40 @@ interface WorkspaceState {
   removePane: (id: string) => void;
   applyPreset: (presetName: string, profileId: string) => void;
   clearAllPanes: () => void;
-  renameWorkspace: (name: string) => void;
-  addProfile: (profile: TerminalProfile) => void;
   updatePaneProfile: (paneId: string, profileId: string) => void;
   updatePaneColor: (paneId: string, color: string) => void;
+  updatePaneCwd: (paneId: string, cwd: string) => void;
+  toggleMaximize: (paneId: string) => void;
+  focusNextPane: () => void;
+  focusPrevPane: () => void;
+  focusPaneByIndex: (index: number) => void;
+  focusDirection: (direction: 'up' | 'down' | 'left' | 'right') => void;
+
+  // Profile actions
+  addProfile: (profile: TerminalProfile) => void;
   updateProfileColor: (profileId: string, color: string) => void;
+
+  // UI actions
   setProjectsPath: (path: string) => void;
   setShowProjectBrowser: (show: boolean) => void;
   setChangeDirPaneId: (paneId: string | null) => void;
   setPendingCwd: (paneId: string, path: string) => void;
   clearPendingCwd: () => void;
-  toggleMaximize: (paneId: string) => void;
   setShowCommandPalette: (show: boolean) => void;
-  focusNextPane: () => void;
-  focusPrevPane: () => void;
-  focusPaneByIndex: (index: number) => void;
-  focusDirection: (direction: 'up' | 'down' | 'left' | 'right') => void;
-  getPaneIndex: (paneId: string) => number;
+
+  // Layout persistence
   initProjectsPath: () => Promise<void>;
   restoreLayout: () => boolean;
   saveCustomLayout: (name: string) => void;
   deleteCustomLayout: (id: string) => void;
   applyCustomLayout: (layout: NamedLayout) => void;
-
-  // Inner workspace actions
-  createPaneWorkspace: (parentPaneId: string) => void;
-  removePaneWorkspace: (parentPaneId: string) => void;
-  addInnerPane: (
-    parentPaneId: string,
-    profileId: string,
-    direction?: 'right' | 'below',
-  ) => void;
-  removeInnerPane: (parentPaneId: string, innerPaneId: string) => void;
-  setActiveInnerPaneId: (
-    parentPaneId: string,
-    innerPaneId: string | null,
-  ) => void;
-  toggleInnerMaximize: (parentPaneId: string, innerPaneId: string) => void;
-  updateInnerPaneProfile: (
-    parentPaneId: string,
-    innerPaneId: string,
-    profileId: string,
-  ) => void;
-  updateInnerPaneColor: (
-    parentPaneId: string,
-    innerPaneId: string,
-    color: string,
-  ) => void;
-  // Live CWD tracking — updated from OSC 7 in terminal-pane
-  updatePaneCwd: (paneId: string, cwd: string) => void;
 }
 
-// DEFAULT_PROFILES always has at least one entry
-const defaultProfile = DEFAULT_PROFILES[0]!;
-
-function createPane(profileId: string): Pane {
-  const profile =
-    DEFAULT_PROFILES.find((p) => p.id === profileId) ?? defaultProfile;
-  return {
-    id: generateId(),
-    profileId,
-    title: profile.name,
-  };
-}
-
-function createDefaultWorkspace(): Workspace {
-  return {
-    id: generateId(),
-    name: 'Default Workspace',
-    panes: [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-}
+/* ── Store ── */
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  workspace: createDefaultWorkspace(),
+  workspaces: [],
+  activeWorkspaceId: null,
   profiles: (() => {
     const saved = loadProfileColors();
     return DEFAULT_PROFILES.map((p) => ({
@@ -145,57 +149,191 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ...(saved[p.id] ? { color: saved[p.id] } : {}),
     }));
   })(),
-  activePaneId: null,
   layoutVersion: 0,
-  activePreset: null,
   projectsPath: '',
   showProjectBrowser: false,
   changeDirPaneId: null,
   pendingCwd: null,
-  maximizedPaneId: null,
   showCommandPalette: false,
   customLayouts: loadNamedLayouts(),
-  paneWorkspaces: {},
 
-  setActivePaneId: (id) => set({ activePaneId: id }),
+  /* ── Workspace tab actions ── */
+
+  addWorkspace: (name, cwd, profileId) => {
+    const ws = createWorkspaceTab(name, cwd, profileId ?? 'system-shell');
+
+    // Save outgoing workspace's Dockview layout before switching
+    let dockviewLayout: unknown = null;
+    try {
+      if (dockviewApiRef.current)
+        dockviewLayout = dockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
+    }
+
+    set((s) => ({
+      workspaces: [
+        ...s.workspaces.map((w) =>
+          w.id === s.activeWorkspaceId ? { ...w, dockviewLayout } : w,
+        ),
+        ws,
+      ],
+      activeWorkspaceId: ws.id,
+      layoutVersion: s.layoutVersion + 1,
+      showProjectBrowser: false,
+    }));
+
+    return ws.id;
+  },
+
+  removeWorkspace: (id) => {
+    const state = get();
+    const idx = state.workspaces.findIndex((w) => w.id === id);
+    if (idx === -1) return;
+
+    // Destroy all terminal entries for the removed workspace
+    const ws = state.workspaces[idx]!;
+    for (const pane of ws.panes) {
+      destroyTerminalEntry(pane.id);
+    }
+
+    const remaining = state.workspaces.filter((w) => w.id !== id);
+    let nextActiveId = state.activeWorkspaceId;
+    if (nextActiveId === id) {
+      nextActiveId = remaining[Math.min(idx, remaining.length - 1)]?.id ?? null;
+    }
+
+    set((s) => ({
+      workspaces: remaining,
+      activeWorkspaceId: nextActiveId,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
+  setActiveWorkspace: (id) => {
+    const state = get();
+    if (state.activeWorkspaceId === id) return;
+
+    // Serialize current Dockview layout into the outgoing workspace
+    let dockviewLayout: unknown = null;
+    try {
+      if (dockviewApiRef.current)
+        dockviewLayout = dockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
+    }
+
+    set((s) => ({
+      workspaces: s.workspaces.map((w) =>
+        w.id === s.activeWorkspaceId ? { ...w, dockviewLayout } : w,
+      ),
+      activeWorkspaceId: id,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
+  renameWorkspaceTab: (id, name) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, name } : w)),
+    })),
+
+  nextWorkspace: () =>
+    set((state) => {
+      if (state.workspaces.length <= 1) return state;
+      const idx = state.workspaces.findIndex(
+        (w) => w.id === state.activeWorkspaceId,
+      );
+      const nextIdx = (idx + 1) % state.workspaces.length;
+
+      // Save outgoing Dockview layout
+      let dockviewLayout: unknown = null;
+      try {
+        if (dockviewApiRef.current)
+          dockviewLayout = dockviewApiRef.current.toJSON();
+      } catch {
+        /* ignore */
+      }
+
+      return {
+        workspaces: state.workspaces.map((w) =>
+          w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
+        ),
+        activeWorkspaceId: state.workspaces[nextIdx]!.id,
+        layoutVersion: state.layoutVersion + 1,
+      };
+    }),
+
+  prevWorkspace: () =>
+    set((state) => {
+      if (state.workspaces.length <= 1) return state;
+      const idx = state.workspaces.findIndex(
+        (w) => w.id === state.activeWorkspaceId,
+      );
+      const prevIdx =
+        (idx - 1 + state.workspaces.length) % state.workspaces.length;
+
+      let dockviewLayout: unknown = null;
+      try {
+        if (dockviewApiRef.current)
+          dockviewLayout = dockviewApiRef.current.toJSON();
+      } catch {
+        /* ignore */
+      }
+
+      return {
+        workspaces: state.workspaces.map((w) =>
+          w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
+        ),
+        activeWorkspaceId: state.workspaces[prevIdx]!.id,
+        layoutVersion: state.layoutVersion + 1,
+      };
+    }),
+
+  /* ── Pane actions (scoped to active workspace) ── */
+
+  setActivePaneId: (id) =>
+    set((state) => updateActive(state, () => ({ activePaneId: id }))),
 
   addPane: (profileId, direction = 'right') =>
     set((state) => {
+      const ws = getActive(state);
+      if (!ws) {
+        // No workspace — create one
+        const newWs = createWorkspaceTab('Workspace', undefined, profileId);
+        return {
+          workspaces: [...state.workspaces, newWs],
+          activeWorkspaceId: newWs.id,
+          layoutVersion: state.layoutVersion + 1,
+          showProjectBrowser: false,
+        };
+      }
+
       const pane = createPane(profileId);
-
-      // Split from the active pane (or last pane if none active)
       const refPaneId =
-        state.activePaneId ??
-        state.workspace.panes[state.workspace.panes.length - 1]?.id ??
-        null;
-
+        ws.activePaneId ?? ws.panes[ws.panes.length - 1]?.id ?? null;
       const paneWithSplit: Pane = refPaneId
         ? { ...pane, splitFrom: { paneId: refPaneId, direction } }
         : pane;
 
       return {
-        workspace: {
-          ...state.workspace,
-          panes: [...state.workspace.panes, paneWithSplit],
-          updatedAt: new Date().toISOString(),
-        },
-        activePaneId: paneWithSplit.id,
-        activePreset: null,
-        // Clear stale project browser overlay when transitioning from empty state
+        ...updateActive(state, () => ({
+          panes: [...ws.panes, paneWithSplit],
+          activePaneId: paneWithSplit.id,
+          activePreset: null,
+        })),
         showProjectBrowser:
-          state.workspace.panes.length === 0 ? false : state.showProjectBrowser,
+          ws.panes.length === 0 ? false : state.showProjectBrowser,
       };
     }),
 
   addPaneWithCwd: (profileId, cwd, direction = 'right') =>
     set((state) => {
+      const ws = getActive(state);
+      if (!ws) return state;
+
       const pane = createPane(profileId);
-
       const refPaneId =
-        state.activePaneId ??
-        state.workspace.panes[state.workspace.panes.length - 1]?.id ??
-        null;
-
+        ws.activePaneId ?? ws.panes[ws.panes.length - 1]?.id ?? null;
       const paneWithMeta: Pane = {
         ...pane,
         cwd,
@@ -203,71 +341,60 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
 
       return {
-        workspace: {
-          ...state.workspace,
-          panes: [...state.workspace.panes, paneWithMeta],
-          updatedAt: new Date().toISOString(),
-        },
-        activePaneId: paneWithMeta.id,
-        activePreset: null,
+        ...updateActive(state, () => ({
+          panes: [...ws.panes, paneWithMeta],
+          activePaneId: paneWithMeta.id,
+          activePreset: null,
+        })),
         showProjectBrowser:
-          state.workspace.panes.length === 0 ? false : state.showProjectBrowser,
+          ws.panes.length === 0 ? false : state.showProjectBrowser,
       };
     }),
 
   removePane: (id) =>
     set((state) => {
-      const remaining = state.workspace.panes.filter((p) => p.id !== id);
-      let nextActiveId = state.activePaneId;
+      const ws = getActive(state);
+      if (!ws) return state;
+
+      const remaining = ws.panes.filter((p) => p.id !== id);
+      let nextActiveId = ws.activePaneId;
       if (nextActiveId === id) {
-        const oldIndex = state.workspace.panes.findIndex((p) => p.id === id);
+        const oldIndex = ws.panes.findIndex((p) => p.id === id);
         nextActiveId =
           remaining[Math.min(oldIndex, remaining.length - 1)]?.id ?? null;
       }
-      // Clean up any inner workspace for this pane
-      const { [id]: _, ...remainingWorkspaces } = state.paneWorkspaces;
-      return {
-        workspace: {
-          ...state.workspace,
-          panes: remaining,
-          updatedAt: new Date().toISOString(),
-        },
+
+      return updateActive(state, () => ({
+        panes: remaining,
         activePaneId: nextActiveId,
         activePreset: null,
-        maximizedPaneId:
-          state.maximizedPaneId === id ? null : state.maximizedPaneId,
-        paneWorkspaces: remainingWorkspaces,
-      };
+        maximizedPaneId: ws.maximizedPaneId === id ? null : ws.maximizedPaneId,
+      }));
     }),
 
   applyPreset: (presetName, profileId) =>
     set((state) => {
+      const ws = getActive(state);
+      if (!ws) return state;
+
       const preset = GRID_PRESETS.find((p) => p.name === presetName);
       if (!preset) return state;
 
-      const existingPanes = [...state.workspace.panes];
-      const targetCount = preset.panelCount;
-
-      // Reuse existing panes (preserve profile + CWD), create new ones only if needed
+      const existingPanes = [...ws.panes];
       const newPanes: Pane[] = [];
-      while (existingPanes.length + newPanes.length < targetCount) {
+      while (existingPanes.length + newPanes.length < preset.panelCount) {
         newPanes.push(createPane(profileId));
       }
       const allPanes = [...existingPanes, ...newPanes];
 
-      // Apply dockview positions with resolved stable IDs
       const resultPanes: Pane[] = allPanes.map((pane, i) => {
         if (i >= preset.positions.length) {
-          // Extra pane beyond preset slots — clear positioning, Dockview will place it
           return { ...pane, dockviewPosition: undefined, splitFrom: undefined };
         }
-
         const posConfig = preset.positions[i]!;
         if (!posConfig.direction || posConfig.referenceIndex === undefined) {
-          // First panel — no reference needed
           return { ...pane, dockviewPosition: {}, splitFrom: undefined };
         }
-
         return {
           ...pane,
           dockviewPosition: {
@@ -279,143 +406,112 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
 
       return {
-        workspace: {
-          ...state.workspace,
+        ...updateActive(state, () => ({
           panes: resultPanes,
-          updatedAt: new Date().toISOString(),
-        },
-        activePaneId: resultPanes[0]?.id ?? null,
-        activePreset: presetName,
+          activePaneId: resultPanes[0]?.id ?? null,
+          activePreset: presetName,
+        })),
         layoutVersion: state.layoutVersion + 1,
         showProjectBrowser: false,
-        // Clear nested workspaces — preset creates fresh pane IDs
-        paneWorkspaces: {},
       };
     }),
 
-  clearAllPanes: () => {
-    clearSavedLayout();
-    return set((state) => ({
-      workspace: {
-        ...state.workspace,
-        panes: [],
-        updatedAt: new Date().toISOString(),
-      },
-      activePaneId: null,
-      activePreset: null,
-      maximizedPaneId: null,
-      layoutVersion: state.layoutVersion + 1,
-      paneWorkspaces: {},
-    }));
-  },
-
-  renameWorkspace: (name) =>
-    set((state) => ({
-      workspace: {
-        ...state.workspace,
-        name,
-        updatedAt: new Date().toISOString(),
-      },
-    })),
-
-  addProfile: (profile) =>
-    set((state) => ({
-      profiles: [...state.profiles, profile],
-    })),
+  clearAllPanes: () =>
+    set((state) => {
+      const ws = getActive(state);
+      if (!ws) return state;
+      return {
+        ...updateActive(state, () => ({
+          panes: [],
+          activePaneId: null,
+          activePreset: null,
+          maximizedPaneId: null,
+        })),
+        layoutVersion: state.layoutVersion + 1,
+      };
+    }),
 
   updatePaneProfile: (paneId, profileId) =>
     set((state) => {
+      const ws = getActive(state);
+      if (!ws) return state;
       const profile =
-        state.profiles.find((candidate) => candidate.id === profileId) ??
-        defaultProfile;
-
-      return {
-        workspace: {
-          ...state.workspace,
-          panes: state.workspace.panes.map((pane) =>
-            pane.id === paneId
-              ? {
-                  ...pane,
-                  profileId,
-                  title: profile.name,
-                }
-              : pane,
-          ),
-          updatedAt: new Date().toISOString(),
-        },
+        state.profiles.find((p) => p.id === profileId) ?? defaultProfile;
+      return updateActive(state, () => ({
+        panes: ws.panes.map((p) =>
+          p.id === paneId ? { ...p, profileId, title: profile.name } : p,
+        ),
         activePreset: null,
-      };
+      }));
     }),
 
   updatePaneColor: (paneId, color) =>
-    set((state) => ({
-      workspace: {
-        ...state.workspace,
-        panes: state.workspace.panes.map((pane) =>
-          pane.id === paneId ? { ...pane, colorOverride: color } : pane,
-        ),
-        updatedAt: new Date().toISOString(),
-      },
-    })),
-
-  updateProfileColor: (profileId, color) =>
     set((state) => {
-      const profiles = state.profiles.map((p) =>
-        p.id === profileId ? { ...p, color } : p,
-      );
-      const colorMap: Record<string, string> = {};
-      for (const p of profiles) {
-        if (p.color) colorMap[p.id] = p.color;
-      }
-      saveProfileColors(colorMap);
-      return { profiles };
+      const ws = getActive(state);
+      if (!ws) return state;
+      return updateActive(state, () => ({
+        panes: ws.panes.map((p) =>
+          p.id === paneId ? { ...p, colorOverride: color } : p,
+        ),
+      }));
     }),
 
-  setProjectsPath: (path) => set({ projectsPath: path }),
-  setShowProjectBrowser: (show) => set({ showProjectBrowser: show }),
-  setChangeDirPaneId: (paneId) => set({ changeDirPaneId: paneId }),
-  setPendingCwd: (paneId, path) => set({ pendingCwd: { paneId, path } }),
-  clearPendingCwd: () => set({ pendingCwd: null }),
+  updatePaneCwd: (paneId, cwd) =>
+    set((state) => {
+      const ws = getActive(state);
+      if (!ws) return state;
+      return updateActive(state, () => ({
+        panes: ws.panes.map((p) => (p.id === paneId ? { ...p, cwd } : p)),
+      }));
+    }),
 
   toggleMaximize: (paneId) =>
-    set((state) => ({
-      maximizedPaneId: state.maximizedPaneId === paneId ? null : paneId,
-    })),
-
-  setShowCommandPalette: (show) => set({ showCommandPalette: show }),
+    set((state) => {
+      const ws = getActive(state);
+      if (!ws) return state;
+      return updateActive(state, () => ({
+        maximizedPaneId: ws.maximizedPaneId === paneId ? null : paneId,
+      }));
+    }),
 
   focusNextPane: () =>
     set((state) => {
-      const panes = state.workspace.panes;
-      if (panes.length === 0) return state;
-      const idx = panes.findIndex((p) => p.id === state.activePaneId);
-      if (idx === -1) return { activePaneId: panes[0]!.id };
-      const next = panes[(idx + 1) % panes.length]!;
-      return { activePaneId: next.id };
+      const ws = getActive(state);
+      if (!ws || ws.panes.length === 0) return state;
+      const idx = ws.panes.findIndex((p) => p.id === ws.activePaneId);
+      if (idx === -1)
+        return updateActive(state, () => ({ activePaneId: ws.panes[0]!.id }));
+      const next = ws.panes[(idx + 1) % ws.panes.length]!;
+      return updateActive(state, () => ({ activePaneId: next.id }));
     }),
 
   focusPrevPane: () =>
     set((state) => {
-      const panes = state.workspace.panes;
-      if (panes.length === 0) return state;
-      const idx = panes.findIndex((p) => p.id === state.activePaneId);
-      if (idx === -1) return { activePaneId: panes[panes.length - 1]!.id };
-      const prev = panes[(idx - 1 + panes.length) % panes.length]!;
-      return { activePaneId: prev.id };
+      const ws = getActive(state);
+      if (!ws || ws.panes.length === 0) return state;
+      const idx = ws.panes.findIndex((p) => p.id === ws.activePaneId);
+      if (idx === -1)
+        return updateActive(state, () => ({
+          activePaneId: ws.panes[ws.panes.length - 1]!.id,
+        }));
+      const prev = ws.panes[(idx - 1 + ws.panes.length) % ws.panes.length]!;
+      return updateActive(state, () => ({ activePaneId: prev.id }));
     }),
 
   focusPaneByIndex: (index) =>
     set((state) => {
-      const pane = state.workspace.panes[index];
+      const ws = getActive(state);
+      if (!ws) return state;
+      const pane = ws.panes[index];
       if (!pane) return state;
-      return { activePaneId: pane.id };
+      return updateActive(state, () => ({ activePaneId: pane.id }));
     }),
 
   focusDirection: (direction) => {
     const state = get();
-    if (!state.activePaneId) return;
+    const ws = getActive(state);
+    if (!ws?.activePaneId) return;
 
-    // Query DOM for pane positions
     const elements = document.querySelectorAll<HTMLElement>('[data-pane-id]');
     const rects = new Map<string, DOMRect>();
     elements.forEach((el) => {
@@ -423,7 +519,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (id) rects.set(id, el.getBoundingClientRect());
     });
 
-    const activeRect = rects.get(state.activePaneId);
+    const activeRect = rects.get(ws.activePaneId);
     if (!activeRect) return;
 
     const activeCx = activeRect.left + activeRect.width / 2;
@@ -433,14 +529,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     let bestDist = Infinity;
 
     for (const [id, rect] of rects) {
-      if (id === state.activePaneId) continue;
-
+      if (id === ws.activePaneId) continue;
       const cx = rect.left + rect.width / 2;
       const cy = rect.top + rect.height / 2;
       const dx = cx - activeCx;
       const dy = cy - activeCy;
 
-      // Check direction constraint
       let valid = false;
       switch (direction) {
         case 'left':
@@ -465,12 +559,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     }
 
-    if (bestId) set({ activePaneId: bestId });
+    if (bestId) {
+      set((s) => updateActive(s, () => ({ activePaneId: bestId })));
+    }
   },
 
-  getPaneIndex: (paneId: string): number => {
-    return get().workspace.panes.findIndex((p) => p.id === paneId);
-  },
+  /* ── Profile actions ── */
+
+  addProfile: (profile) =>
+    set((state) => ({ profiles: [...state.profiles, profile] })),
+
+  updateProfileColor: (profileId, color) =>
+    set((state) => {
+      const profiles = state.profiles.map((p) =>
+        p.id === profileId ? { ...p, color } : p,
+      );
+      const colorMap: Record<string, string> = {};
+      for (const p of profiles) {
+        if (p.color) colorMap[p.id] = p.color;
+      }
+      saveProfileColors(colorMap);
+      return { profiles };
+    }),
+
+  /* ── UI actions ── */
+
+  setProjectsPath: (path) => set({ projectsPath: path }),
+  setShowProjectBrowser: (show) => set({ showProjectBrowser: show }),
+  setChangeDirPaneId: (paneId) => set({ changeDirPaneId: paneId }),
+  setPendingCwd: (paneId, path) => set({ pendingCwd: { paneId, path } }),
+  clearPendingCwd: () => set({ pendingCwd: null }),
+  setShowCommandPalette: (show) => set({ showCommandPalette: show }),
+
+  /* ── Layout persistence ── */
 
   initProjectsPath: async () => {
     if (get().projectsPath) return;
@@ -479,7 +600,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const sep = getPlatform() === 'windows' ? '\\' : '/';
       set({ projectsPath: home + sep + 'Desktop' + sep + 'Projects' });
     } catch {
-      // Fallback if path API unavailable
       const fallback = getPlatform() === 'windows' ? 'C:\\Users' : '/home';
       set({ projectsPath: fallback });
     }
@@ -487,62 +607,65 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   restoreLayout: () => {
     const saved = loadLayout();
-    if (!saved || saved.panes.length === 0) return false;
+    if (!saved || saved.workspaces.length === 0) return false;
 
-    // Validate pane data — each needs at least id and profileId
-    const validPanes = saved.panes.filter(
-      (p) =>
-        p.id &&
-        p.profileId &&
-        DEFAULT_PROFILES.some((dp) => dp.id === p.profileId),
-    );
-    if (validPanes.length === 0) {
+    const profiles = get().profiles;
+
+    // Validate workspace tabs and their panes
+    const validWorkspaces = saved.workspaces
+      .map((ws) => {
+        const validPanes = ws.panes.filter(
+          (p) =>
+            p.id && p.profileId && profiles.some((dp) => dp.id === p.profileId),
+        );
+        // Strip mode field from legacy panes
+        const cleanPanes = validPanes.map((p) => {
+          const { ...rest } = p as Pane & { mode?: string };
+          if ('mode' in rest) {
+            const { mode: _, ...clean } = rest as Pane & { mode?: string };
+            return clean;
+          }
+          return rest;
+        });
+        // Sanitize dockviewPosition references
+        const validIds = new Set(cleanPanes.map((p) => p.id));
+        const sanitizedPanes = cleanPanes.map((p) => {
+          if (
+            p.dockviewPosition?.referenceId &&
+            !validIds.has(p.dockviewPosition.referenceId)
+          ) {
+            const { dockviewPosition: _, ...rest } = p;
+            return rest;
+          }
+          return p;
+        });
+
+        return {
+          ...ws,
+          panes: sanitizedPanes,
+          activePaneId:
+            ws.activePaneId && validIds.has(ws.activePaneId)
+              ? ws.activePaneId
+              : (sanitizedPanes[0]?.id ?? null),
+        };
+      })
+      .filter((ws) => ws.panes.length > 0);
+
+    if (validWorkspaces.length === 0) {
       clearSavedLayout();
       return false;
     }
 
-    // Sanitize dockviewPosition references — strip any that point to
-    // pane IDs not present in the restored set (prevents dockview crash)
-    const validIds = new Set(validPanes.map((p) => p.id));
-    const sanitizedPanes = validPanes.map((p) => {
-      if (
-        p.dockviewPosition?.referenceId &&
-        !validIds.has(p.dockviewPosition.referenceId)
-      ) {
-        const { dockviewPosition: _, ...rest } = p;
-        return rest;
-      }
-      return p;
-    });
-
-    // Restore inner workspaces — validate inner pane profileIds too
-    const restoredWorkspaces: Record<string, PaneWorkspace> = {};
-    if (saved.paneWorkspaces) {
-      for (const [parentId, pw] of Object.entries(saved.paneWorkspaces)) {
-        if (validIds.has(parentId) && pw.panes?.length > 0) {
-          const validInnerPanes = pw.panes.filter(
-            (p) =>
-              p.id &&
-              p.profileId &&
-              DEFAULT_PROFILES.some((dp) => dp.id === p.profileId),
-          );
-          if (validInnerPanes.length > 0) {
-            restoredWorkspaces[parentId] = { ...pw, panes: validInnerPanes };
-          }
-        }
-      }
-    }
+    const activeId =
+      saved.activeWorkspaceId &&
+      validWorkspaces.some((w) => w.id === saved.activeWorkspaceId)
+        ? saved.activeWorkspaceId
+        : validWorkspaces[0]!.id;
 
     set((state) => ({
-      workspace: {
-        ...state.workspace,
-        panes: sanitizedPanes,
-        updatedAt: new Date().toISOString(),
-      },
-      activePaneId: saved.activePaneId ?? sanitizedPanes[0]?.id ?? null,
-      activePreset: saved.activePreset,
+      workspaces: validWorkspaces,
+      activeWorkspaceId: activeId,
       layoutVersion: state.layoutVersion + 1,
-      paneWorkspaces: restoredWorkspaces,
     }));
 
     return true;
@@ -550,6 +673,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   saveCustomLayout: (name) => {
     const state = get();
+    // Serialize current Dockview layout into active workspace
     let dockviewLayout: unknown = null;
     try {
       if (dockviewApiRef.current)
@@ -557,14 +681,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } catch {
       /* ignore */
     }
+    const workspaces = state.workspaces.map((w) =>
+      w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
+    );
     const layout: NamedLayout = {
       id: generateId(),
       name,
-      panes: state.workspace.panes,
-      dockviewLayout,
-      ...(Object.keys(state.paneWorkspaces).length > 0
-        ? { paneWorkspaces: state.paneWorkspaces }
-        : {}),
+      workspaces,
       savedAt: new Date().toISOString(),
     };
     saveNamedLayout(layout);
@@ -578,253 +701,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   applyCustomLayout: (layout) => {
     const profiles = get().profiles;
-    const validPanes = layout.panes.filter(
-      (p) =>
-        p.id && p.profileId && profiles.some((dp) => dp.id === p.profileId),
-    );
-    if (validPanes.length === 0) return;
+    const validWorkspaces = layout.workspaces
+      .map((ws) => {
+        const validPanes = ws.panes.filter(
+          (p) =>
+            p.id && p.profileId && profiles.some((dp) => dp.id === p.profileId),
+        );
+        return { ...ws, panes: validPanes };
+      })
+      .filter((ws) => ws.panes.length > 0);
 
-    // Restore inner workspaces — validate inner pane profileIds too
-    const validIds = new Set(validPanes.map((p) => p.id));
-    const restoredWorkspaces: Record<string, PaneWorkspace> = {};
-    if (layout.paneWorkspaces) {
-      for (const [parentId, pw] of Object.entries(layout.paneWorkspaces)) {
-        if (validIds.has(parentId) && pw.panes?.length > 0) {
-          const validInnerPanes = pw.panes.filter(
-            (p) =>
-              p.id &&
-              p.profileId &&
-              profiles.some((dp) => dp.id === p.profileId),
-          );
-          if (validInnerPanes.length > 0) {
-            restoredWorkspaces[parentId] = { ...pw, panes: validInnerPanes };
-          }
-        }
-      }
-    }
+    if (validWorkspaces.length === 0) return;
 
     set((state) => ({
-      workspace: {
-        ...state.workspace,
-        panes: validPanes,
-        updatedAt: new Date().toISOString(),
-      },
-      activePaneId: validPanes[0]?.id ?? null,
-      activePreset: null,
+      workspaces: validWorkspaces,
+      activeWorkspaceId: validWorkspaces[0]!.id,
       layoutVersion: state.layoutVersion + 1,
-      paneWorkspaces: restoredWorkspaces,
     }));
   },
-
-  /* ── Inner workspace actions ── */
-
-  createPaneWorkspace: (parentPaneId) => {
-    // Destroy the outer pane's terminal — it will be replaced by a nested grid
-    destroyTerminalEntry(parentPaneId);
-
-    set((state) => {
-      // Already has a workspace — no-op
-      if (state.paneWorkspaces[parentPaneId]) return state;
-
-      const outerPane = state.workspace.panes.find(
-        (p) => p.id === parentPaneId,
-      );
-      if (!outerPane) return state;
-
-      // Create the initial inner pane inheriting the outer pane's profile/cwd
-      const innerPane: InnerPane = {
-        id: generateId(),
-        profileId: outerPane.profileId,
-        title: outerPane.title,
-        cwd: outerPane.cwd,
-      };
-
-      const pw: PaneWorkspace = {
-        id: generateId(),
-        parentPaneId,
-        panes: [innerPane],
-        maximizedPaneId: null,
-        activePaneId: innerPane.id,
-      };
-
-      return {
-        workspace: {
-          ...state.workspace,
-          panes: state.workspace.panes.map((p) =>
-            p.id === parentPaneId ? { ...p, mode: 'workspace' as const } : p,
-          ),
-          updatedAt: new Date().toISOString(),
-        },
-        paneWorkspaces: {
-          ...state.paneWorkspaces,
-          [parentPaneId]: pw,
-        },
-      };
-    });
-  },
-
-  removePaneWorkspace: (parentPaneId) => {
-    // Immediately destroy all inner pane terminals before state update
-    const pw = get().paneWorkspaces[parentPaneId];
-    if (pw) {
-      for (const innerPane of pw.panes) {
-        destroyTerminalEntry(innerPane.id);
-      }
-    }
-
-    set((state) => {
-      const { [parentPaneId]: _, ...rest } = state.paneWorkspaces;
-      return {
-        workspace: {
-          ...state.workspace,
-          panes: state.workspace.panes.map((p) =>
-            p.id === parentPaneId ? { ...p, mode: 'single' as const } : p,
-          ),
-          updatedAt: new Date().toISOString(),
-        },
-        paneWorkspaces: rest,
-      };
-    });
-  },
-
-  addInnerPane: (parentPaneId, profileId, direction = 'right') =>
-    set((state) => {
-      const pw = state.paneWorkspaces[parentPaneId];
-      if (!pw) return state;
-
-      const profile =
-        state.profiles.find((p) => p.id === profileId) ?? defaultProfile;
-      const refPaneId =
-        pw.activePaneId ?? pw.panes[pw.panes.length - 1]?.id ?? null;
-
-      const innerPane: InnerPane = {
-        id: generateId(),
-        profileId,
-        title: profile.name,
-        ...(refPaneId ? { splitFrom: { paneId: refPaneId, direction } } : {}),
-      };
-
-      return {
-        paneWorkspaces: {
-          ...state.paneWorkspaces,
-          [parentPaneId]: {
-            ...pw,
-            panes: [...pw.panes, innerPane],
-            activePaneId: innerPane.id,
-          },
-        },
-      };
-    }),
-
-  removeInnerPane: (parentPaneId, innerPaneId) =>
-    set((state) => {
-      const pw = state.paneWorkspaces[parentPaneId];
-      if (!pw) return state;
-
-      const remaining = pw.panes.filter((p) => p.id !== innerPaneId);
-
-      // If last inner pane removed, keep workspace mode with empty state.
-      // The outer pane has no terminal instance of its own — reverting to
-      // 'single' would leave a blank pane. The NestedWorkspaceGrid shows
-      // an "Empty workspace" message. User can add new inner panes or
-      // revert to terminal via context menu (which spawns a fresh terminal).
-
-      let nextActiveId = pw.activePaneId;
-      if (nextActiveId === innerPaneId) {
-        const oldIndex = pw.panes.findIndex((p) => p.id === innerPaneId);
-        nextActiveId =
-          remaining[Math.min(oldIndex, remaining.length - 1)]?.id ?? null;
-      }
-
-      return {
-        paneWorkspaces: {
-          ...state.paneWorkspaces,
-          [parentPaneId]: {
-            ...pw,
-            panes: remaining,
-            activePaneId: nextActiveId,
-            maximizedPaneId:
-              pw.maximizedPaneId === innerPaneId ? null : pw.maximizedPaneId,
-          },
-        },
-      };
-    }),
-
-  setActiveInnerPaneId: (parentPaneId, innerPaneId) =>
-    set((state) => {
-      const pw = state.paneWorkspaces[parentPaneId];
-      if (!pw) return state;
-      return {
-        paneWorkspaces: {
-          ...state.paneWorkspaces,
-          [parentPaneId]: { ...pw, activePaneId: innerPaneId },
-        },
-      };
-    }),
-
-  toggleInnerMaximize: (parentPaneId, innerPaneId) =>
-    set((state) => {
-      const pw = state.paneWorkspaces[parentPaneId];
-      if (!pw) return state;
-      return {
-        paneWorkspaces: {
-          ...state.paneWorkspaces,
-          [parentPaneId]: {
-            ...pw,
-            maximizedPaneId:
-              pw.maximizedPaneId === innerPaneId ? null : innerPaneId,
-          },
-        },
-      };
-    }),
-
-  updateInnerPaneProfile: (parentPaneId, innerPaneId, profileId) =>
-    set((state) => {
-      const pw = state.paneWorkspaces[parentPaneId];
-      if (!pw) return state;
-
-      const profile =
-        state.profiles.find((p) => p.id === profileId) ?? defaultProfile;
-
-      return {
-        paneWorkspaces: {
-          ...state.paneWorkspaces,
-          [parentPaneId]: {
-            ...pw,
-            panes: pw.panes.map((p) =>
-              p.id === innerPaneId
-                ? { ...p, profileId, title: profile.name }
-                : p,
-            ),
-          },
-        },
-      };
-    }),
-
-  updateInnerPaneColor: (parentPaneId, innerPaneId, color) =>
-    set((state) => {
-      const pw = state.paneWorkspaces[parentPaneId];
-      if (!pw) return state;
-      return {
-        paneWorkspaces: {
-          ...state.paneWorkspaces,
-          [parentPaneId]: {
-            ...pw,
-            panes: pw.panes.map((p) =>
-              p.id === innerPaneId ? { ...p, colorOverride: color } : p,
-            ),
-          },
-        },
-      };
-    }),
-
-  updatePaneCwd: (paneId, cwd) =>
-    set((state) => ({
-      workspace: {
-        ...state.workspace,
-        panes: state.workspace.panes.map((p) =>
-          p.id === paneId ? { ...p, cwd } : p,
-        ),
-      },
-    })),
 }));
