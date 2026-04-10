@@ -71,6 +71,10 @@ export function normalizeCwd(raw: string, platform: string): string | null {
     // Normalize remaining forward slashes to backslashes
     path = path.replace(/\//g, '\\');
 
+    // Drive-letter paths with spurious leading backslashes (e.g. //C:/… → \\C:\…)
+    // must be caught before the UNC branch to avoid misclassification.
+    path = path.replace(/^\\+([A-Za-z]:\\)/, '$1');
+
     // UNC paths: \\server\share\… — valid Windows network paths
     if (/^\\\\[^\\]+\\[^\\]+/.test(path)) {
       // Collapse repeated internal backslashes (preserve leading \\)

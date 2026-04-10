@@ -124,6 +124,15 @@ describe('normalizeCwd — windows', () => {
     );
   });
 
+  it('normalizes //C:/... to drive-letter path (not UNC)', () => {
+    // file:////C:/Users/... produces pathname //C:/Users/...
+    expect(normalizeCwd('//C:/Users/brayd', win)).toBe('C:\\Users\\brayd');
+  });
+
+  it('normalizes ///d:/... to drive-letter path (not UNC)', () => {
+    expect(normalizeCwd('///d:/Projects', win)).toBe('d:\\Projects');
+  });
+
   it('converts WSL /mnt/c paths to drive-letter paths', () => {
     expect(normalizeCwd('/mnt/c/Users/brayd', win)).toBe('C:\\Users\\brayd');
   });
