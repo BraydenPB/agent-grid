@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import type { Pane, Workspace, TerminalProfile } from '@/types';
+import type {
+  Pane,
+  InnerPane,
+  PaneWorkspace,
+  Workspace,
+  TerminalProfile,
+} from '@/types';
 import { DEFAULT_PROFILES } from '@/lib/profiles';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 import { generateId } from '@/lib/utils';
@@ -41,6 +47,8 @@ interface WorkspaceState {
   showCommandPalette: boolean;
   // User-saved named layouts
   customLayouts: NamedLayout[];
+  // Nested workspaces keyed by outer paneId
+  paneWorkspaces: Record<string, PaneWorkspace>;
 
   // Actions
   setActivePaneId: (id: string | null) => void;
@@ -75,6 +83,31 @@ interface WorkspaceState {
   saveCustomLayout: (name: string) => void;
   deleteCustomLayout: (id: string) => void;
   applyCustomLayout: (layout: NamedLayout) => void;
+
+  // Inner workspace actions
+  createPaneWorkspace: (parentPaneId: string) => void;
+  removePaneWorkspace: (parentPaneId: string) => void;
+  addInnerPane: (
+    parentPaneId: string,
+    profileId: string,
+    direction?: 'right' | 'below',
+  ) => void;
+  removeInnerPane: (parentPaneId: string, innerPaneId: string) => void;
+  setActiveInnerPaneId: (
+    parentPaneId: string,
+    innerPaneId: string | null,
+  ) => void;
+  toggleInnerMaximize: (parentPaneId: string, innerPaneId: string) => void;
+  updateInnerPaneProfile: (
+    parentPaneId: string,
+    innerPaneId: string,
+    profileId: string,
+  ) => void;
+  updateInnerPaneColor: (
+    parentPaneId: string,
+    innerPaneId: string,
+    color: string,
+  ) => void;
 }
 
 // DEFAULT_PROFILES always has at least one entry
@@ -119,6 +152,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   maximizedPaneId: null,
   showCommandPalette: false,
   customLayouts: loadNamedLayouts(),
+  paneWorkspaces: {},
 
   setActivePaneId: (id) => set({ activePaneId: id }),
 
@@ -187,6 +221,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         nextActiveId =
           remaining[Math.min(oldIndex, remaining.length - 1)]?.id ?? null;
       }
+      // Clean up any inner workspace for this pane
+      const { [id]: _, ...remainingWorkspaces } = state.paneWorkspaces;
       return {
         workspace: {
           ...state.workspace,
@@ -197,6 +233,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activePreset: null,
         maximizedPaneId:
           state.maximizedPaneId === id ? null : state.maximizedPaneId,
+        paneWorkspaces: remainingWorkspaces,
       };
     }),
 
@@ -263,6 +300,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activePreset: null,
       maximizedPaneId: null,
       layoutVersion: state.layoutVersion + 1,
+      paneWorkspaces: {},
     }));
   },
 
@@ -472,6 +510,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return p;
     });
 
+    // Restore inner workspaces — only for panes that survived validation
+    const restoredWorkspaces: Record<string, PaneWorkspace> = {};
+    if (saved.paneWorkspaces) {
+      for (const [parentId, pw] of Object.entries(saved.paneWorkspaces)) {
+        if (validIds.has(parentId) && pw.panes?.length > 0) {
+          restoredWorkspaces[parentId] = pw;
+        }
+      }
+    }
+
     set((state) => ({
       workspace: {
         ...state.workspace,
@@ -481,6 +529,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activePaneId: saved.activePaneId ?? sanitizedPanes[0]?.id ?? null,
       activePreset: saved.activePreset,
       layoutVersion: state.layoutVersion + 1,
+      paneWorkspaces: restoredWorkspaces,
     }));
 
     return true;
@@ -500,6 +549,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       name,
       panes: state.workspace.panes,
       dockviewLayout,
+      ...(Object.keys(state.paneWorkspaces).length > 0
+        ? { paneWorkspaces: state.paneWorkspaces }
+        : {}),
       savedAt: new Date().toISOString(),
     };
     saveNamedLayout(layout);
@@ -518,6 +570,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         p.id && p.profileId && profiles.some((dp) => dp.id === p.profileId),
     );
     if (validPanes.length === 0) return;
+
+    // Restore inner workspaces — only for panes that survived validation
+    const validIds = new Set(validPanes.map((p) => p.id));
+    const restoredWorkspaces: Record<string, PaneWorkspace> = {};
+    if (layout.paneWorkspaces) {
+      for (const [parentId, pw] of Object.entries(layout.paneWorkspaces)) {
+        if (validIds.has(parentId) && pw.panes?.length > 0) {
+          restoredWorkspaces[parentId] = pw;
+        }
+      }
+    }
+
     set((state) => ({
       workspace: {
         ...state.workspace,
@@ -527,6 +591,205 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activePaneId: validPanes[0]?.id ?? null,
       activePreset: null,
       layoutVersion: state.layoutVersion + 1,
+      paneWorkspaces: restoredWorkspaces,
     }));
   },
+
+  /* ── Inner workspace actions ── */
+
+  createPaneWorkspace: (parentPaneId) =>
+    set((state) => {
+      // Already has a workspace — no-op
+      if (state.paneWorkspaces[parentPaneId]) return state;
+
+      const outerPane = state.workspace.panes.find(
+        (p) => p.id === parentPaneId,
+      );
+      if (!outerPane) return state;
+
+      // Create the initial inner pane inheriting the outer pane's profile/cwd
+      const innerPane: InnerPane = {
+        id: generateId(),
+        profileId: outerPane.profileId,
+        title: outerPane.title,
+        cwd: outerPane.cwd,
+      };
+
+      const pw: PaneWorkspace = {
+        id: generateId(),
+        parentPaneId,
+        panes: [innerPane],
+        maximizedPaneId: null,
+        activePaneId: innerPane.id,
+      };
+
+      return {
+        workspace: {
+          ...state.workspace,
+          panes: state.workspace.panes.map((p) =>
+            p.id === parentPaneId ? { ...p, mode: 'workspace' as const } : p,
+          ),
+          updatedAt: new Date().toISOString(),
+        },
+        paneWorkspaces: {
+          ...state.paneWorkspaces,
+          [parentPaneId]: pw,
+        },
+      };
+    }),
+
+  removePaneWorkspace: (parentPaneId) =>
+    set((state) => {
+      const { [parentPaneId]: _, ...rest } = state.paneWorkspaces;
+      return {
+        workspace: {
+          ...state.workspace,
+          panes: state.workspace.panes.map((p) =>
+            p.id === parentPaneId ? { ...p, mode: 'single' as const } : p,
+          ),
+          updatedAt: new Date().toISOString(),
+        },
+        paneWorkspaces: rest,
+      };
+    }),
+
+  addInnerPane: (parentPaneId, profileId, direction = 'right') =>
+    set((state) => {
+      const pw = state.paneWorkspaces[parentPaneId];
+      if (!pw) return state;
+
+      const profile =
+        state.profiles.find((p) => p.id === profileId) ?? defaultProfile;
+      const refPaneId =
+        pw.activePaneId ?? pw.panes[pw.panes.length - 1]?.id ?? null;
+
+      const innerPane: InnerPane = {
+        id: generateId(),
+        profileId,
+        title: profile.name,
+        ...(refPaneId ? { splitFrom: { paneId: refPaneId, direction } } : {}),
+      };
+
+      return {
+        paneWorkspaces: {
+          ...state.paneWorkspaces,
+          [parentPaneId]: {
+            ...pw,
+            panes: [...pw.panes, innerPane],
+            activePaneId: innerPane.id,
+          },
+        },
+      };
+    }),
+
+  removeInnerPane: (parentPaneId, innerPaneId) =>
+    set((state) => {
+      const pw = state.paneWorkspaces[parentPaneId];
+      if (!pw) return state;
+
+      const remaining = pw.panes.filter((p) => p.id !== innerPaneId);
+
+      // If last inner pane removed, revert to single mode
+      if (remaining.length === 0) {
+        const { [parentPaneId]: _, ...rest } = state.paneWorkspaces;
+        return {
+          workspace: {
+            ...state.workspace,
+            panes: state.workspace.panes.map((p) =>
+              p.id === parentPaneId ? { ...p, mode: 'single' as const } : p,
+            ),
+            updatedAt: new Date().toISOString(),
+          },
+          paneWorkspaces: rest,
+        };
+      }
+
+      let nextActiveId = pw.activePaneId;
+      if (nextActiveId === innerPaneId) {
+        const oldIndex = pw.panes.findIndex((p) => p.id === innerPaneId);
+        nextActiveId =
+          remaining[Math.min(oldIndex, remaining.length - 1)]?.id ?? null;
+      }
+
+      return {
+        paneWorkspaces: {
+          ...state.paneWorkspaces,
+          [parentPaneId]: {
+            ...pw,
+            panes: remaining,
+            activePaneId: nextActiveId,
+            maximizedPaneId:
+              pw.maximizedPaneId === innerPaneId ? null : pw.maximizedPaneId,
+          },
+        },
+      };
+    }),
+
+  setActiveInnerPaneId: (parentPaneId, innerPaneId) =>
+    set((state) => {
+      const pw = state.paneWorkspaces[parentPaneId];
+      if (!pw) return state;
+      return {
+        paneWorkspaces: {
+          ...state.paneWorkspaces,
+          [parentPaneId]: { ...pw, activePaneId: innerPaneId },
+        },
+      };
+    }),
+
+  toggleInnerMaximize: (parentPaneId, innerPaneId) =>
+    set((state) => {
+      const pw = state.paneWorkspaces[parentPaneId];
+      if (!pw) return state;
+      return {
+        paneWorkspaces: {
+          ...state.paneWorkspaces,
+          [parentPaneId]: {
+            ...pw,
+            maximizedPaneId:
+              pw.maximizedPaneId === innerPaneId ? null : innerPaneId,
+          },
+        },
+      };
+    }),
+
+  updateInnerPaneProfile: (parentPaneId, innerPaneId, profileId) =>
+    set((state) => {
+      const pw = state.paneWorkspaces[parentPaneId];
+      if (!pw) return state;
+
+      const profile =
+        state.profiles.find((p) => p.id === profileId) ?? defaultProfile;
+
+      return {
+        paneWorkspaces: {
+          ...state.paneWorkspaces,
+          [parentPaneId]: {
+            ...pw,
+            panes: pw.panes.map((p) =>
+              p.id === innerPaneId
+                ? { ...p, profileId, title: profile.name }
+                : p,
+            ),
+          },
+        },
+      };
+    }),
+
+  updateInnerPaneColor: (parentPaneId, innerPaneId, color) =>
+    set((state) => {
+      const pw = state.paneWorkspaces[parentPaneId];
+      if (!pw) return state;
+      return {
+        paneWorkspaces: {
+          ...state.paneWorkspaces,
+          [parentPaneId]: {
+            ...pw,
+            panes: pw.panes.map((p) =>
+              p.id === innerPaneId ? { ...p, colorOverride: color } : p,
+            ),
+          },
+        },
+      };
+    }),
 }));

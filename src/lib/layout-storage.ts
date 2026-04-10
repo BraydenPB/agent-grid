@@ -2,7 +2,7 @@
  * Layout persistence — save/restore workspace pane state + Dockview layout to localStorage.
  */
 
-import type { Pane } from '@/types';
+import type { Pane, PaneWorkspace } from '@/types';
 
 const STORAGE_KEY = 'agent-grid:layout';
 const NAMED_LAYOUTS_KEY = 'agent-grid:named-layouts';
@@ -16,6 +16,8 @@ interface SavedLayout {
   activePreset: string | null;
   /** Dockview toJSON() result for restoring panel sizes/groups */
   dockviewLayout: unknown;
+  /** Inner workspace state keyed by parent pane ID */
+  paneWorkspaces?: Record<string, PaneWorkspace>;
   /** Timestamp for staleness detection */
   savedAt: string;
 }
@@ -25,12 +27,14 @@ export function saveLayout(
   activePaneId: string | null,
   activePreset: string | null,
   dockviewLayout: unknown,
+  paneWorkspaces?: Record<string, PaneWorkspace>,
 ): void {
   const data: SavedLayout = {
     panes,
     activePaneId,
     activePreset,
     dockviewLayout,
+    paneWorkspaces,
     savedAt: new Date().toISOString(),
   };
   try {
@@ -68,6 +72,7 @@ export interface NamedLayout {
   name: string;
   panes: Pane[];
   dockviewLayout: unknown;
+  paneWorkspaces?: Record<string, PaneWorkspace>;
   savedAt: string;
 }
 

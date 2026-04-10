@@ -24,6 +24,7 @@ import type { TerminalProfile } from '@/types';
 import { cn } from '@/lib/utils';
 import { TerminalSearch } from './terminal-search';
 import { TerminalContextMenu } from './terminal-context-menu';
+import { NestedWorkspaceGrid } from './nested-workspace-grid';
 
 /* ── Constants ── */
 const FONT_SIZE_MIN = 8;
@@ -64,6 +65,8 @@ interface TerminalPaneProps {
   onClose: () => void;
   paneId: string;
   initialCwd?: string;
+  /** When set, this pane lives inside a nested workspace grid */
+  innerContext?: { parentPaneId: string };
 }
 
 const IDLE_TIMEOUT_MS = 3000;
@@ -75,7 +78,15 @@ export function TerminalPane({
   onClose,
   paneId,
   initialCwd,
+  innerContext,
 }: TerminalPaneProps) {
+  // Check if this outer pane is in workspace mode
+  const paneMode = useWorkspaceStore(
+    (s) =>
+      !innerContext
+        ? (s.workspace.panes.find((p) => p.id === paneId)?.mode ?? 'single')
+        : 'single', // Inner panes are always single
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<TerminalEntry | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -99,36 +110,57 @@ export function TerminalPane({
   const profiles = useWorkspaceStore(
     (s: { profiles: TerminalProfile[] }) => s.profiles,
   );
-  const paneProfileId = useWorkspaceStore(
-    (s: { workspace: { panes: { id: string; profileId: string }[] } }) =>
-      s.workspace.panes.find(
-        (p: { id: string; profileId: string }) => p.id === paneId,
-      )?.profileId ?? initialProfile.id,
-  );
+  const paneProfileId = useWorkspaceStore((s) => {
+    if (innerContext) {
+      const pw = s.paneWorkspaces[innerContext.parentPaneId];
+      return (
+        pw?.panes.find((p) => p.id === paneId)?.profileId ?? initialProfile.id
+      );
+    }
+    return (
+      s.workspace.panes.find((p) => p.id === paneId)?.profileId ??
+      initialProfile.id
+    );
+  });
   const updatePaneProfile = useWorkspaceStore(
     (s: { updatePaneProfile: (paneId: string, profileId: string) => void }) =>
       s.updatePaneProfile,
+  );
+  const updateInnerPaneProfile = useWorkspaceStore(
+    (s) => s.updateInnerPaneProfile,
   );
   // Derive activeProfile from store — single source of truth for color etc.
   const activeProfile =
     profiles.find((p) => p.id === paneProfileId) ?? initialProfile;
   // Per-pane color override takes precedence over profile color
-  const paneColorOverride = useWorkspaceStore(
-    (s) => s.workspace.panes.find((p) => p.id === paneId)?.colorOverride,
-  );
+  const paneColorOverride = useWorkspaceStore((s) => {
+    if (innerContext) {
+      const pw = s.paneWorkspaces[innerContext.parentPaneId];
+      return pw?.panes.find((p) => p.id === paneId)?.colorOverride;
+    }
+    return s.workspace.panes.find((p) => p.id === paneId)?.colorOverride;
+  });
   const effectiveColor = paneColorOverride ?? activeProfile.color ?? '#636d83';
 
   // Get pane index for display (1-based)
-  const paneIndex = useWorkspaceStore(
-    (s: { workspace: { panes: { id: string }[] } }) =>
-      s.workspace.panes.findIndex((p: { id: string }) => p.id === paneId),
-  );
+  const paneIndex = useWorkspaceStore((s) => {
+    if (innerContext) {
+      const pw = s.paneWorkspaces[innerContext.parentPaneId];
+      return pw?.panes.findIndex((p) => p.id === paneId) ?? -1;
+    }
+    return s.workspace.panes.findIndex((p) => p.id === paneId);
+  });
   const toggleMaximize = useWorkspaceStore(
     (s: { toggleMaximize: (id: string) => void }) => s.toggleMaximize,
   );
-  const isMaximized = useWorkspaceStore(
-    (s: { maximizedPaneId: string | null }) => s.maximizedPaneId === paneId,
-  );
+  const toggleInnerMaximize = useWorkspaceStore((s) => s.toggleInnerMaximize);
+  const isMaximized = useWorkspaceStore((s) => {
+    if (innerContext) {
+      const pw = s.paneWorkspaces[innerContext.parentPaneId];
+      return pw?.maximizedPaneId === paneId;
+    }
+    return s.maximizedPaneId === paneId;
+  });
 
   /* ── Addon loading ── */
   const loadAddons = useCallback(
@@ -212,18 +244,34 @@ export function TerminalPane({
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'D' && e.type === 'keydown') {
           const store = useWorkspaceStore.getState();
-          const currentPane = store.workspace.panes.find(
-            (p) => p.id === paneId,
-          );
-          store.addPane(currentPane?.profileId ?? initialProfile.id, 'right');
+          if (innerContext) {
+            store.addInnerPane(
+              innerContext.parentPaneId,
+              initialProfile.id,
+              'right',
+            );
+          } else {
+            const currentPane = store.workspace.panes.find(
+              (p) => p.id === paneId,
+            );
+            store.addPane(currentPane?.profileId ?? initialProfile.id, 'right');
+          }
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'E' && e.type === 'keydown') {
           const store = useWorkspaceStore.getState();
-          const currentPane = store.workspace.panes.find(
-            (p) => p.id === paneId,
-          );
-          store.addPane(currentPane?.profileId ?? initialProfile.id, 'below');
+          if (innerContext) {
+            store.addInnerPane(
+              innerContext.parentPaneId,
+              initialProfile.id,
+              'below',
+            );
+          } else {
+            const currentPane = store.workspace.panes.find(
+              (p) => p.id === paneId,
+            );
+            store.addPane(currentPane?.profileId ?? initialProfile.id, 'below');
+          }
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'W' && e.type === 'keydown') {
@@ -256,7 +304,7 @@ export function TerminalPane({
         return true;
       });
     },
-    [initialProfile.id, onClose, paneId],
+    [initialProfile.id, onClose, paneId, innerContext],
   );
 
   /* ── Font zoom ── */
@@ -400,7 +448,15 @@ export function TerminalPane({
       const entry = entryRef.current;
       if (!entry) return;
 
-      updatePaneProfile(paneId, newProfile.id);
+      if (innerContext) {
+        updateInnerPaneProfile(
+          innerContext.parentPaneId,
+          paneId,
+          newProfile.id,
+        );
+      } else {
+        updatePaneProfile(paneId, newProfile.id);
+      }
       entry.profileId = newProfile.id;
       entry.terminal.clear();
       entry.terminal.reset();
@@ -411,7 +467,14 @@ export function TerminalPane({
       await spawnProcess(entry, newProfile, cwd || undefined);
       entry.terminal.focus();
     },
-    [spawnProcess, cwd, paneId, updatePaneProfile],
+    [
+      spawnProcess,
+      cwd,
+      paneId,
+      updatePaneProfile,
+      updateInnerPaneProfile,
+      innerContext,
+    ],
   );
 
   /* ── Directory changing ── */
@@ -473,8 +536,12 @@ export function TerminalPane({
 
   /* ── Double-click header to maximize/restore ── */
   const handleHeaderDoubleClick = useCallback(() => {
-    toggleMaximize(paneId);
-  }, [paneId, toggleMaximize]);
+    if (innerContext) {
+      toggleInnerMaximize(innerContext.parentPaneId, paneId);
+    } else {
+      toggleMaximize(paneId);
+    }
+  }, [paneId, toggleMaximize, toggleInnerMaximize, innerContext]);
 
   /* ── Terminal initialization / reattachment ── */
   useEffect(() => {
@@ -653,6 +720,112 @@ export function TerminalPane({
 
   const cwdLabel = cwd ? cwd.split(/[\\/]/).pop() : '';
 
+  // Workspace mode — render nested grid instead of terminal
+  if (paneMode === 'workspace' && !innerContext) {
+    return (
+      <div
+        role="application"
+        aria-label={`Workspace: ${activeProfile.name}`}
+        className={cn(
+          'group relative flex h-full flex-col overflow-hidden',
+          isActive ? 'pane-active' : 'pane-inactive',
+        )}
+        style={{ background: '#0a0a0f' }}
+        onMouseDown={onFocus}
+      >
+        {/* Workspace pane header */}
+        <div
+          className={cn(
+            'pane-drag-handle flex h-7 shrink-0 items-center justify-between px-2',
+            'cursor-grab select-none active:cursor-grabbing',
+            'border-b border-white/[0.06]',
+            'transition-colors duration-100',
+            isActive ? 'bg-white/[0.04]' : 'bg-white/[0.02]',
+          )}
+          style={{ '--accent-1': effectiveColor } as React.CSSProperties}
+          onDoubleClick={handleHeaderDoubleClick}
+          title="Double-click to maximize"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className={cn(
+                'w-3.5 shrink-0 text-center font-mono text-[9px] font-bold transition-colors duration-100',
+                isActive ? 'text-zinc-400' : 'text-zinc-700',
+              )}
+            >
+              {paneIndex + 1}
+            </span>
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full transition-all duration-200"
+              style={{
+                backgroundColor: effectiveColor,
+                opacity: isActive ? 1 : 0.35,
+                boxShadow: isActive ? `0 0 4px ${effectiveColor}66` : 'none',
+              }}
+            />
+            <span
+              className={cn(
+                'truncate text-[10px] font-medium transition-colors duration-100',
+                isActive ? 'text-zinc-300' : 'text-zinc-600',
+              )}
+            >
+              {activeProfile.name}
+            </span>
+            <span className="rounded bg-white/[0.06] px-1 py-px text-[8px] font-medium text-zinc-500">
+              workspace
+            </span>
+          </div>
+          <div
+            className={cn(
+              'flex shrink-0 items-center gap-0.5',
+              'transition-opacity duration-100',
+              isMaximized ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+            )}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleMaximize(paneId);
+              }}
+              className={cn(
+                'flex h-4 w-4 items-center justify-center rounded',
+                'transition-all duration-100',
+                isMaximized
+                  ? 'text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'
+                  : 'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+              )}
+              title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
+            >
+              {isMaximized ? (
+                <Minimize2 size={8} strokeWidth={2} />
+              ) : (
+                <Maximize2 size={8} strokeWidth={2} />
+              )}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              className={cn(
+                'flex h-4 w-4 items-center justify-center rounded',
+                'transition-all duration-100',
+                'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+              )}
+              title="Close pane (Ctrl+W)"
+            >
+              <X size={9} strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+        {/* Nested workspace grid */}
+        <div className="min-h-0 flex-1">
+          <NestedWorkspaceGrid parentPaneId={paneId} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       role="application"
@@ -752,7 +925,11 @@ export function TerminalPane({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              toggleMaximize(paneId);
+              if (innerContext) {
+                toggleInnerMaximize(innerContext.parentPaneId, paneId);
+              } else {
+                toggleMaximize(paneId);
+              }
             }}
             className={cn(
               'flex h-4 w-4 items-center justify-center rounded',
@@ -821,13 +998,32 @@ export function TerminalPane({
         onSwitchProfile={(profile) => void handleSwitchProfile(profile)}
         cwd={cwd}
         onChangeDirectory={handleChangeDirectory}
-        onSplitRight={() =>
-          useWorkspaceStore.getState().addPane(activeProfile.id, 'right')
-        }
-        onSplitBelow={() =>
-          useWorkspaceStore.getState().addPane(activeProfile.id, 'below')
-        }
+        onSplitRight={() => {
+          const store = useWorkspaceStore.getState();
+          if (innerContext) {
+            store.addInnerPane(
+              innerContext.parentPaneId,
+              activeProfile.id,
+              'right',
+            );
+          } else {
+            store.addPane(activeProfile.id, 'right');
+          }
+        }}
+        onSplitBelow={() => {
+          const store = useWorkspaceStore.getState();
+          if (innerContext) {
+            store.addInnerPane(
+              innerContext.parentPaneId,
+              activeProfile.id,
+              'below',
+            );
+          } else {
+            store.addPane(activeProfile.id, 'below');
+          }
+        }}
         onClose_pane={onClose}
+        innerContext={innerContext}
       />
     </div>
   );

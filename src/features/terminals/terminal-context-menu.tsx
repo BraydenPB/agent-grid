@@ -21,6 +21,7 @@ import {
   ChevronRight,
   ChevronLeft,
   Palette,
+  LayoutGrid,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
@@ -76,6 +77,8 @@ interface TerminalContextMenuProps {
   onSplitRight: () => void;
   onSplitBelow: () => void;
   onClose_pane: () => void;
+  /** When set, this pane is inside a nested workspace — hide "Convert to Workspace" */
+  innerContext?: { parentPaneId: string };
 }
 
 export function TerminalContextMenu({
@@ -97,6 +100,7 @@ export function TerminalContextMenu({
   onSplitRight,
   onSplitBelow,
   onClose_pane,
+  innerContext,
 }: TerminalContextMenuProps) {
   // Single source of truth: all profile data from the store
   const profiles = useWorkspaceStore((s) => s.profiles);
@@ -576,6 +580,14 @@ export function TerminalContextMenu({
           </div>
         )}
 
+        {/* Convert to/from workspace — only for outer panes */}
+        {!innerContext && (
+          <>
+            <Sep />
+            <ConvertToWorkspaceItem paneId={paneId} onClose={onClose} />
+          </>
+        )}
+
         <Sep />
 
         {/* Layout */}
@@ -638,6 +650,57 @@ export function TerminalContextMenu({
       </motion.div>
     </div>,
     document.body,
+  );
+}
+
+/* ── Workspace toggle ── */
+
+function ConvertToWorkspaceItem({
+  paneId,
+  onClose,
+}: {
+  paneId: string;
+  onClose: () => void;
+}) {
+  const paneMode = useWorkspaceStore(
+    (s) => s.workspace.panes.find((p) => p.id === paneId)?.mode ?? 'single',
+  );
+  const createPaneWorkspace = useWorkspaceStore((s) => s.createPaneWorkspace);
+  const removePaneWorkspace = useWorkspaceStore((s) => s.removePaneWorkspace);
+  const innerPaneCount = useWorkspaceStore(
+    (s) => s.paneWorkspaces[paneId]?.panes.length ?? 0,
+  );
+
+  if (paneMode === 'workspace') {
+    return (
+      <Item
+        icon={<TerminalSquare size={12} />}
+        label="Revert to Terminal"
+        onClick={() => {
+          if (
+            innerPaneCount > 1 &&
+            !window.confirm(
+              `This will close ${innerPaneCount} inner terminal sessions. Continue?`,
+            )
+          ) {
+            return;
+          }
+          removePaneWorkspace(paneId);
+          onClose();
+        }}
+      />
+    );
+  }
+
+  return (
+    <Item
+      icon={<LayoutGrid size={12} />}
+      label="Convert to Workspace"
+      onClick={() => {
+        createPaneWorkspace(paneId);
+        onClose();
+      }}
+    />
   );
 }
 

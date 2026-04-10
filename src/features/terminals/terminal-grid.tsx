@@ -55,6 +55,7 @@ export function TerminalGrid() {
     setShowProjectBrowser,
     setChangeDirPaneId,
     maximizedPaneId,
+    paneWorkspaces,
   } = useWorkspaceStore();
 
   const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
@@ -347,8 +348,14 @@ export function TerminalGrid() {
   // Clean up orphaned registry entries when panes change
   useEffect(() => {
     const activePaneIds = workspace.panes.map((p) => p.id);
+    // Include inner pane IDs from all nested workspaces
+    for (const pw of Object.values(paneWorkspaces)) {
+      for (const inner of pw.panes) {
+        activePaneIds.push(inner.id);
+      }
+    }
     cleanupOrphanedEntries(activePaneIds);
-  }, [workspace.panes]);
+  }, [workspace.panes, paneWorkspaces]);
 
   // Debounced layout save to localStorage
   useEffect(() => {
@@ -366,10 +373,11 @@ export function TerminalGrid() {
         state.activePaneId,
         state.activePreset,
         dockviewLayout,
+        state.paneWorkspaces,
       );
     }, 500);
     return () => clearTimeout(timer);
-  }, [localDockviewApi, workspace.panes, maximizedPaneId]);
+  }, [localDockviewApi, workspace.panes, maximizedPaneId, paneWorkspaces]);
 
   const handlePanelClose = useCallback((panelId: string) => {
     useWorkspaceStore.getState().removePane(panelId);
