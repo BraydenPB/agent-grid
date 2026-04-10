@@ -279,8 +279,33 @@ export function NestedWorkspaceGrid({
 
   if (!paneWorkspace || paneWorkspace.panes.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-xs text-zinc-600">
-        Empty workspace
+      <div className="flex h-full flex-col items-center justify-center gap-3">
+        <p className="text-[11px] text-zinc-600">No terminals in this group</p>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              const store = useWorkspaceStore.getState();
+              const outerPane = store.workspace.panes.find(
+                (p) => p.id === parentPaneId,
+              );
+              store.addInnerPane(
+                parentPaneId,
+                outerPane?.profileId ?? 'system-shell',
+              );
+            }}
+            className="rounded-md bg-white/[0.06] px-3 py-1.5 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-white/[0.1]"
+          >
+            Add Terminal
+          </button>
+          <button
+            onClick={() =>
+              useWorkspaceStore.getState().removePaneWorkspace(parentPaneId)
+            }
+            className="rounded-md px-3 py-1.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+          >
+            Unsplit
+          </button>
+        </div>
       </div>
     );
   }

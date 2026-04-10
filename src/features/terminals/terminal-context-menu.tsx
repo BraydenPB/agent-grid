@@ -692,12 +692,12 @@ function ConvertToWorkspaceItem({
     return (
       <Item
         icon={<TerminalSquare size={12} />}
-        label="Revert to Terminal"
+        label="Unsplit Group"
         onClick={() => {
           if (
             innerPaneCount >= 1 &&
             !window.confirm(
-              `This will close ${innerPaneCount} inner terminal session${innerPaneCount !== 1 ? 's' : ''} and start a fresh terminal. Continue?`,
+              `This will close ${innerPaneCount} terminal${innerPaneCount !== 1 ? 's' : ''} in this group and revert to a single terminal. Continue?`,
             )
           ) {
             return;
@@ -712,7 +712,8 @@ function ConvertToWorkspaceItem({
   return (
     <Item
       icon={<LayoutGrid size={12} />}
-      label="Convert to Workspace"
+      label="Split into Group"
+      hint="Nest terminals"
       onClick={() => {
         createPaneWorkspace(paneId);
         onClose();

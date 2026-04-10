@@ -14,7 +14,6 @@ import {
   Minimize2,
   PanelRight,
   PanelBottom,
-  LayoutGrid,
   FolderOpen,
 } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
@@ -708,7 +707,7 @@ export function TerminalPane({
         entryRef.current = null;
       }
     };
-  }, [paneId]); // Only re-run if paneId changes (never during rearrange)
+  }, [paneId, paneMode]); // Re-run on paneId change or mode switch (workspace↔single)
 
   useEffect(() => {
     if (entryRef.current) {
@@ -728,111 +727,47 @@ export function TerminalPane({
 
   const cwdLabel = cwd ? cwd.split(/[\\/]/).pop() : '';
 
-  // Workspace mode — render nested grid instead of terminal
+  // Workspace mode — render nested grid instead of terminal.
+  // No extra header — inner panes have their own headers via TerminalPane.
   if (paneMode === 'workspace' && !innerContext) {
     return (
       <div
         role="application"
-        aria-label={`Workspace: ${activeProfile.name}`}
-        className={cn(
-          'group relative flex h-full flex-col overflow-hidden',
-          isActive ? 'pane-active' : 'pane-inactive',
-        )}
-        style={
-          {
-            background: '#0a0a0f',
-            '--pane-color': effectiveColor,
-          } as React.CSSProperties
-        }
+        aria-label={`Split Group: ${activeProfile.name}`}
+        className="relative flex h-full flex-col overflow-hidden"
+        style={{ background: '#0a0a0f' }}
         onMouseDown={onFocus}
+        onContextMenu={handleContextMenu}
       >
-        {/* Color accent — left edge */}
-        <span
-          className="absolute top-0 left-0 z-10 h-full w-[2px]"
-          style={{
-            backgroundColor: effectiveColor,
-            opacity: isActive ? 0.7 : 0.2,
-          }}
-        />
-
-        {/* Workspace pane header */}
-        <div
-          className={cn(
-            'pane-drag-handle flex h-8 shrink-0 items-center justify-between gap-2 px-3 pl-3.5',
-            'cursor-grab select-none active:cursor-grabbing',
-            'border-b border-white/[0.06]',
-            'transition-colors duration-100',
-            isActive ? 'bg-white/[0.04]' : 'bg-white/[0.02]',
-          )}
-          style={{ '--accent-1': effectiveColor } as React.CSSProperties}
-          onDoubleClick={handleHeaderDoubleClick}
-          title="Double-click to maximize"
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <span
-              className="h-2 w-2 shrink-0 rounded-full transition-all duration-200"
-              style={{
-                backgroundColor: effectiveColor,
-                opacity: isActive ? 1 : 0.4,
-                boxShadow: isActive ? `0 0 6px ${effectiveColor}44` : 'none',
-              }}
-            />
-            <span
-              className={cn(
-                'truncate text-[11px] font-medium transition-colors duration-100',
-                isActive ? 'text-zinc-200' : 'text-zinc-500',
-              )}
-            >
-              {activeProfile.name}
-            </span>
-            <span className="flex items-center gap-1 rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium text-zinc-500">
-              <LayoutGrid size={8} strokeWidth={2} />
-              workspace
-            </span>
-          </div>
-
-          {/* Actions — always visible */}
-          <div className="flex shrink-0 items-center gap-0.5">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleMaximize(paneId);
-              }}
-              className={cn(
-                'flex h-5 w-5 items-center justify-center rounded',
-                'transition-all duration-100',
-                isMaximized
-                  ? 'text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
-                  : 'text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300',
-              )}
-              title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
-            >
-              {isMaximized ? (
-                <Minimize2 size={10} strokeWidth={2} />
-              ) : (
-                <Maximize2 size={10} strokeWidth={2} />
-              )}
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose();
-              }}
-              className={cn(
-                'flex h-5 w-5 items-center justify-center rounded',
-                'transition-all duration-100',
-                'text-zinc-600 hover:bg-red-500/[0.1] hover:text-red-400',
-              )}
-              title="Close pane (Ctrl+Shift+W)"
-            >
-              <X size={10} strokeWidth={2} />
-            </button>
-          </div>
-        </div>
-        {/* Nested workspace grid */}
         <div className="min-h-0 flex-1">
           <NestedWorkspaceGrid parentPaneId={paneId} />
         </div>
+
+        {/* Context menu — right-click to access "Unsplit" */}
+        <TerminalContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          visible={contextMenu.visible}
+          onClose={() => setContextMenu((s) => ({ ...s, visible: false }))}
+          onCopy={() => {}}
+          onPaste={() => {}}
+          onClear={() => {}}
+          onSearch={() => {}}
+          onReset={() => {}}
+          hasSelection={false}
+          profileId={activeProfile.id}
+          paneId={paneId}
+          onSwitchProfile={() => {}}
+          cwd=""
+          onChangeDirectory={() => {}}
+          onSplitRight={() =>
+            useWorkspaceStore.getState().addPane(activeProfile.id, 'right')
+          }
+          onSplitBelow={() =>
+            useWorkspaceStore.getState().addPane(activeProfile.id, 'below')
+          }
+          onClose_pane={onClose}
+        />
       </div>
     );
   }

@@ -618,7 +618,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   /* ── Inner workspace actions ── */
 
-  createPaneWorkspace: (parentPaneId) =>
+  createPaneWorkspace: (parentPaneId) => {
+    // Destroy the outer pane's terminal — it will be replaced by a nested grid
+    destroyTerminalEntry(parentPaneId);
+
     set((state) => {
       // Already has a workspace — no-op
       if (state.paneWorkspaces[parentPaneId]) return state;
@@ -657,7 +660,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           [parentPaneId]: pw,
         },
       };
-    }),
+    });
+  },
 
   removePaneWorkspace: (parentPaneId) => {
     // Immediately destroy all inner pane terminals before state update
