@@ -21,6 +21,7 @@ import {
   type NamedLayout,
 } from '@/lib/layout-storage';
 import { dockviewApiRef } from '@/lib/dockview-api';
+import { destroyTerminalEntry } from '@/lib/terminal-registry';
 
 interface WorkspaceState {
   // Current workspace
@@ -287,6 +288,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activePreset: presetName,
         layoutVersion: state.layoutVersion + 1,
         showProjectBrowser: false,
+        // Clear nested workspaces — preset creates fresh pane IDs
+        paneWorkspaces: {},
       };
     }),
 
@@ -512,12 +515,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return p;
     });
 
-    // Restore inner workspaces — only for panes that survived validation
+    // Restore inner workspaces — validate inner pane profileIds too
     const restoredWorkspaces: Record<string, PaneWorkspace> = {};
     if (saved.paneWorkspaces) {
       for (const [parentId, pw] of Object.entries(saved.paneWorkspaces)) {
         if (validIds.has(parentId) && pw.panes?.length > 0) {
-          restoredWorkspaces[parentId] = pw;
+          const validInnerPanes = pw.panes.filter(
+            (p) =>
+              p.id &&
+              p.profileId &&
+              DEFAULT_PROFILES.some((dp) => dp.id === p.profileId),
+          );
+          if (validInnerPanes.length > 0) {
+            restoredWorkspaces[parentId] = { ...pw, panes: validInnerPanes };
+          }
         }
       }
     }
@@ -573,13 +584,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     );
     if (validPanes.length === 0) return;
 
-    // Restore inner workspaces — only for panes that survived validation
+    // Restore inner workspaces — validate inner pane profileIds too
     const validIds = new Set(validPanes.map((p) => p.id));
     const restoredWorkspaces: Record<string, PaneWorkspace> = {};
     if (layout.paneWorkspaces) {
       for (const [parentId, pw] of Object.entries(layout.paneWorkspaces)) {
         if (validIds.has(parentId) && pw.panes?.length > 0) {
-          restoredWorkspaces[parentId] = pw;
+          const validInnerPanes = pw.panes.filter(
+            (p) =>
+              p.id &&
+              p.profileId &&
+              profiles.some((dp) => dp.id === p.profileId),
+          );
+          if (validInnerPanes.length > 0) {
+            restoredWorkspaces[parentId] = { ...pw, panes: validInnerPanes };
+          }
         }
       }
     }
@@ -640,7 +659,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
     }),
 
-  removePaneWorkspace: (parentPaneId) =>
+  removePaneWorkspace: (parentPaneId) => {
+    // Immediately destroy all inner pane terminals before state update
+    const pw = get().paneWorkspaces[parentPaneId];
+    if (pw) {
+      for (const innerPane of pw.panes) {
+        destroyTerminalEntry(innerPane.id);
+      }
+    }
+
     set((state) => {
       const { [parentPaneId]: _, ...rest } = state.paneWorkspaces;
       return {
@@ -653,7 +680,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
         paneWorkspaces: rest,
       };
-    }),
+    });
+  },
 
   addInnerPane: (parentPaneId, profileId, direction = 'right') =>
     set((state) => {
@@ -691,20 +719,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       const remaining = pw.panes.filter((p) => p.id !== innerPaneId);
 
-      // If last inner pane removed, revert to single mode
-      if (remaining.length === 0) {
-        const { [parentPaneId]: _, ...rest } = state.paneWorkspaces;
-        return {
-          workspace: {
-            ...state.workspace,
-            panes: state.workspace.panes.map((p) =>
-              p.id === parentPaneId ? { ...p, mode: 'single' as const } : p,
-            ),
-            updatedAt: new Date().toISOString(),
-          },
-          paneWorkspaces: rest,
-        };
-      }
+      // If last inner pane removed, keep workspace mode with empty state.
+      // The outer pane has no terminal instance of its own — reverting to
+      // 'single' would leave a blank pane. The NestedWorkspaceGrid shows
+      // an "Empty workspace" message. User can add new inner panes or
+      // revert to terminal via context menu (which spawns a fresh terminal).
 
       let nextActiveId = pw.activePaneId;
       if (nextActiveId === innerPaneId) {

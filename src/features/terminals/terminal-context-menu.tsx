@@ -105,12 +105,29 @@ export function TerminalContextMenu({
   // Single source of truth: all profile data from the store
   const profiles = useWorkspaceStore((s) => s.profiles);
   const updatePaneColor = useWorkspaceStore((s) => s.updatePaneColor);
-  const paneColorOverride = useWorkspaceStore(
-    (s) => s.workspace.panes.find((p) => p.id === paneId)?.colorOverride,
-  );
+  const updateInnerPaneColor = useWorkspaceStore((s) => s.updateInnerPaneColor);
+  const paneColorOverride = useWorkspaceStore((s) => {
+    if (innerContext) {
+      const pw = s.paneWorkspaces[innerContext.parentPaneId];
+      return pw?.panes.find((p) => p.id === paneId)?.colorOverride;
+    }
+    return s.workspace.panes.find((p) => p.id === paneId)?.colorOverride;
+  });
   const currentProfile =
     profiles.find((p) => p.id === profileId) ?? profiles[0]!;
   const effectiveColor = paneColorOverride ?? currentProfile.color ?? '#6b7280';
+
+  // Route color updates to the correct store action
+  const handleColorUpdate = useCallback(
+    (color: string) => {
+      if (innerContext) {
+        updateInnerPaneColor(innerContext.parentPaneId, paneId, color);
+      } else {
+        updatePaneColor(paneId, color);
+      }
+    },
+    [innerContext, paneId, updatePaneColor, updateInnerPaneColor],
+  );
 
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
@@ -226,10 +243,10 @@ export function TerminalContextMenu({
     if (hex.length === 3) {
       hex = hex[0]! + hex[0]! + hex[1]! + hex[1]! + hex[2]! + hex[2]!;
     }
-    updatePaneColor(paneId, `#${hex}`);
+    handleColorUpdate(`#${hex}`);
     setColorPickerProfileId(null);
     setCustomHex('');
-  }, [pickerProfile, customHex, paneId, updatePaneColor]);
+  }, [pickerProfile, customHex, handleColorUpdate]);
 
   const applyInlineHex = useCallback(() => {
     if (inlineHex.length < 3) return;
@@ -237,10 +254,10 @@ export function TerminalContextMenu({
     if (hex.length === 3) {
       hex = hex[0]! + hex[0]! + hex[1]! + hex[1]! + hex[2]! + hex[2]!;
     }
-    updatePaneColor(paneId, `#${hex}`);
+    handleColorUpdate(`#${hex}`);
     setShowInlineColors(false);
     setInlineHex('');
-  }, [paneId, inlineHex, updatePaneColor]);
+  }, [inlineHex, handleColorUpdate]);
 
   const act = useCallback(
     (fn: () => void) => () => {
@@ -408,7 +425,7 @@ export function TerminalContextMenu({
                           <button
                             key={color}
                             onClick={() => {
-                              updatePaneColor(paneId, color);
+                              handleColorUpdate(color);
                               setColorPickerProfileId(null);
                               setCustomHex('');
                             }}
@@ -520,7 +537,7 @@ export function TerminalContextMenu({
                     key={color}
                     onClick={(e) => {
                       e.stopPropagation();
-                      updatePaneColor(paneId, color);
+                      handleColorUpdate(color);
                     }}
                     className={cn(
                       'flex h-[18px] w-[18px] items-center justify-center rounded-full transition-all hover:scale-125',
@@ -678,9 +695,9 @@ function ConvertToWorkspaceItem({
         label="Revert to Terminal"
         onClick={() => {
           if (
-            innerPaneCount > 1 &&
+            innerPaneCount >= 1 &&
             !window.confirm(
-              `This will close ${innerPaneCount} inner terminal sessions. Continue?`,
+              `This will close ${innerPaneCount} inner terminal session${innerPaneCount !== 1 ? 's' : ''} and start a fresh terminal. Continue?`,
             )
           ) {
             return;
