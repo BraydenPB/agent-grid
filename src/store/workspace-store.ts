@@ -108,6 +108,8 @@ interface WorkspaceState {
     innerPaneId: string,
     color: string,
   ) => void;
+  // Live CWD tracking — updated from OSC 7 in terminal-pane
+  updatePaneCwd: (paneId: string, cwd: string) => void;
 }
 
 // DEFAULT_PROFILES always has at least one entry
@@ -792,4 +794,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
       };
     }),
+
+  updatePaneCwd: (paneId, cwd) =>
+    set((state) => ({
+      workspace: {
+        ...state.workspace,
+        panes: state.workspace.panes.map((p) =>
+          p.id === paneId ? { ...p, cwd } : p,
+        ),
+      },
+    })),
 }));

@@ -281,9 +281,9 @@ body {
   transition: opacity var(--duration-normal) var(--ease-out);
 }
 
-/* Active pane top accent line */
-.pane-active > .pane-drag-handle {
-  box-shadow: inset 0 2px 0 0 var(--accent-1);
+/* ─── Tab strip ─── */
+.tab-strip::-webkit-scrollbar {
+  display: none;
 }
 
 /* ─── Dockview overrides ─── */

@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Titlebar } from '@/components/titlebar';
-import { ShortcutBar } from '@/components/shortcut-bar';
+import { TabStrip } from '@/components/tab-strip';
 import { TerminalGrid } from '@/features/terminals/terminal-grid';
 import { CommandPalette } from '@/features/command-palette/command-palette';
 import { useGlobalShortcuts } from '@/lib/use-global-shortcuts';
@@ -26,6 +26,7 @@ export function App() {
     <ErrorBoundary>
       <div className="mesh-bg flex h-screen w-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100">
         <Titlebar />
+        <TabStrip />
         <main className="relative flex min-h-0 flex-1 flex-col">
           <TerminalGrid />
           <AnimatePresence>
@@ -34,7 +35,6 @@ export function App() {
             )}
           </AnimatePresence>
         </main>
-        <ShortcutBar />
       </div>
     </ErrorBoundary>
   );

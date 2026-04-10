@@ -8,7 +8,15 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { ImageAddon } from '@xterm/addon-image';
-import { X, Maximize2, Minimize2 } from 'lucide-react';
+import {
+  X,
+  Maximize2,
+  Minimize2,
+  PanelRight,
+  PanelBottom,
+  LayoutGrid,
+  FolderOpen,
+} from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { spawnPty, getPlatform, type ShimPty } from '@/lib/tauri-shim';
 import { resolveShellCommand } from '@/lib/profiles';
@@ -142,14 +150,6 @@ export function TerminalPane({
   });
   const effectiveColor = paneColorOverride ?? activeProfile.color ?? '#636d83';
 
-  // Get pane index for display (1-based)
-  const paneIndex = useWorkspaceStore((s) => {
-    if (innerContext) {
-      const pw = s.paneWorkspaces[innerContext.parentPaneId];
-      return pw?.panes.findIndex((p) => p.id === paneId) ?? -1;
-    }
-    return s.workspace.panes.findIndex((p) => p.id === paneId);
-  });
   const toggleMaximize = useWorkspaceStore(
     (s: { toggleMaximize: (id: string) => void }) => s.toggleMaximize,
   );
@@ -330,17 +330,25 @@ export function TerminalPane({
   };
 
   /* ── OSC sequence handler for shell integration ── */
-  const attachOscHandlers = useCallback((term: Terminal) => {
-    term.parser.registerOscHandler(7, (data) => {
-      const normalized = normalizeCwd(data, getPlatform());
-      if (normalized) setCwd(normalized);
-      return true;
-    });
+  const updatePaneCwd = useWorkspaceStore((s) => s.updatePaneCwd);
+  const attachOscHandlers = useCallback(
+    (term: Terminal) => {
+      term.parser.registerOscHandler(7, (data) => {
+        const normalized = normalizeCwd(data, getPlatform());
+        if (normalized) {
+          setCwd(normalized);
+          // Push to store so tab strip can show live CWD
+          if (!innerContext) updatePaneCwd(paneId, normalized);
+        }
+        return true;
+      });
 
-    term.parser.registerOscHandler(133, () => true);
-    term.parser.registerOscHandler(0, () => false);
-    term.parser.registerOscHandler(2, () => false);
-  }, []);
+      term.parser.registerOscHandler(133, () => true);
+      term.parser.registerOscHandler(0, () => false);
+      term.parser.registerOscHandler(2, () => false);
+    },
+    [innerContext, paneId, updatePaneCwd],
+  );
 
   /* ── Status helpers ── */
   const resetIdleTimer = useCallback(() => {
@@ -730,13 +738,27 @@ export function TerminalPane({
           'group relative flex h-full flex-col overflow-hidden',
           isActive ? 'pane-active' : 'pane-inactive',
         )}
-        style={{ background: '#0a0a0f' }}
+        style={
+          {
+            background: '#0a0a0f',
+            '--pane-color': effectiveColor,
+          } as React.CSSProperties
+        }
         onMouseDown={onFocus}
       >
+        {/* Color accent — left edge */}
+        <span
+          className="absolute top-0 left-0 z-10 h-full w-[2px]"
+          style={{
+            backgroundColor: effectiveColor,
+            opacity: isActive ? 0.7 : 0.2,
+          }}
+        />
+
         {/* Workspace pane header */}
         <div
           className={cn(
-            'pane-drag-handle flex h-7 shrink-0 items-center justify-between px-2',
+            'pane-drag-handle flex h-8 shrink-0 items-center justify-between gap-2 px-3 pl-3.5',
             'cursor-grab select-none active:cursor-grabbing',
             'border-b border-white/[0.06]',
             'transition-colors duration-100',
@@ -748,58 +770,47 @@ export function TerminalPane({
         >
           <div className="flex min-w-0 items-center gap-2">
             <span
-              className={cn(
-                'w-3.5 shrink-0 text-center font-mono text-[9px] font-bold transition-colors duration-100',
-                isActive ? 'text-zinc-400' : 'text-zinc-700',
-              )}
-            >
-              {paneIndex + 1}
-            </span>
-            <span
-              className="h-1.5 w-1.5 shrink-0 rounded-full transition-all duration-200"
+              className="h-2 w-2 shrink-0 rounded-full transition-all duration-200"
               style={{
                 backgroundColor: effectiveColor,
-                opacity: isActive ? 1 : 0.35,
-                boxShadow: isActive ? `0 0 4px ${effectiveColor}66` : 'none',
+                opacity: isActive ? 1 : 0.4,
+                boxShadow: isActive ? `0 0 6px ${effectiveColor}44` : 'none',
               }}
             />
             <span
               className={cn(
-                'truncate text-[10px] font-medium transition-colors duration-100',
-                isActive ? 'text-zinc-300' : 'text-zinc-600',
+                'truncate text-[11px] font-medium transition-colors duration-100',
+                isActive ? 'text-zinc-200' : 'text-zinc-500',
               )}
             >
               {activeProfile.name}
             </span>
-            <span className="rounded bg-white/[0.06] px-1 py-px text-[8px] font-medium text-zinc-500">
+            <span className="flex items-center gap-1 rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium text-zinc-500">
+              <LayoutGrid size={8} strokeWidth={2} />
               workspace
             </span>
           </div>
-          <div
-            className={cn(
-              'flex shrink-0 items-center gap-0.5',
-              'transition-opacity duration-100',
-              isMaximized ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-            )}
-          >
+
+          {/* Actions — always visible */}
+          <div className="flex shrink-0 items-center gap-0.5">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 toggleMaximize(paneId);
               }}
               className={cn(
-                'flex h-4 w-4 items-center justify-center rounded',
+                'flex h-5 w-5 items-center justify-center rounded',
                 'transition-all duration-100',
                 isMaximized
-                  ? 'text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'
-                  : 'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+                  ? 'text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
+                  : 'text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300',
               )}
               title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
             >
               {isMaximized ? (
-                <Minimize2 size={8} strokeWidth={2} />
+                <Minimize2 size={10} strokeWidth={2} />
               ) : (
-                <Maximize2 size={8} strokeWidth={2} />
+                <Maximize2 size={10} strokeWidth={2} />
               )}
             </button>
             <button
@@ -808,13 +819,13 @@ export function TerminalPane({
                 onClose();
               }}
               className={cn(
-                'flex h-4 w-4 items-center justify-center rounded',
+                'flex h-5 w-5 items-center justify-center rounded',
                 'transition-all duration-100',
-                'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+                'text-zinc-600 hover:bg-red-500/[0.1] hover:text-red-400',
               )}
-              title="Close pane (Ctrl+W)"
+              title="Close pane (Ctrl+Shift+W)"
             >
-              <X size={9} strokeWidth={2} />
+              <X size={10} strokeWidth={2} />
             </button>
           </div>
         </div>
@@ -834,14 +845,29 @@ export function TerminalPane({
         'group relative flex h-full flex-col overflow-hidden',
         isActive ? 'pane-active' : 'pane-inactive',
       )}
-      style={{ background: '#0a0a0f' }}
+      style={
+        {
+          background: '#0a0a0f',
+          '--pane-color': effectiveColor,
+        } as React.CSSProperties
+      }
       onMouseDown={onFocus}
       onContextMenu={handleContextMenu}
     >
-      {/* Compact pane header */}
+      {/* Color accent — left edge */}
+      <span
+        className="absolute top-0 left-0 z-10 h-full w-[2px]"
+        style={{
+          backgroundColor: effectiveColor,
+          opacity: isActive ? 0.7 : 0.15,
+          transition: 'opacity 150ms ease',
+        }}
+      />
+
+      {/* Pane header */}
       <div
         className={cn(
-          'pane-drag-handle flex h-7 shrink-0 items-center justify-between px-2',
+          'pane-drag-handle flex h-8 shrink-0 items-center justify-between gap-2 px-3 pl-3.5',
           'cursor-grab select-none active:cursor-grabbing',
           'border-b border-white/[0.06]',
           'transition-colors duration-100',
@@ -852,41 +878,29 @@ export function TerminalPane({
         title="Double-click to maximize"
       >
         <div className="flex min-w-0 items-center gap-2">
-          {/* Pane number badge */}
-          <span
-            className={cn(
-              'w-3.5 shrink-0 text-center font-mono text-[9px] font-bold transition-colors duration-100',
-              isActive ? 'text-zinc-400' : 'text-zinc-700',
+          {/* Profile color dot with status indicator */}
+          <span className="relative flex shrink-0 items-center justify-center">
+            <span
+              className="h-2 w-2 rounded-full transition-all duration-200"
+              style={{
+                backgroundColor: effectiveColor,
+                opacity: isActive ? 1 : 0.4,
+                boxShadow: isActive ? `0 0 6px ${effectiveColor}44` : 'none',
+              }}
+            />
+            {paneStatus !== 'working' && statusColor !== 'transparent' && (
+              <span
+                className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: statusColor }}
+              />
             )}
-          >
-            {paneIndex + 1}
           </span>
-
-          {/* Profile dot — always shows profile color */}
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full transition-all duration-200"
-            style={{
-              backgroundColor: effectiveColor,
-              opacity: isActive ? 1 : 0.35,
-              boxShadow: isActive ? `0 0 4px ${effectiveColor}66` : 'none',
-              outlineStyle:
-                paneStatus !== 'working' && statusColor !== 'transparent'
-                  ? 'solid'
-                  : 'none',
-              outlineWidth: '1.5px',
-              outlineOffset: '1.5px',
-              outlineColor:
-                paneStatus !== 'working' && statusColor !== 'transparent'
-                  ? statusColor
-                  : 'transparent',
-            }}
-          />
 
           {/* Profile name */}
           <span
             className={cn(
-              'truncate text-[10px] font-medium transition-colors duration-100',
-              isActive ? 'text-zinc-300' : 'text-zinc-600',
+              'truncate text-[11px] font-medium transition-colors duration-100',
+              isActive ? 'text-zinc-200' : 'text-zinc-500',
             )}
           >
             {activeProfile.name}
@@ -894,33 +908,78 @@ export function TerminalPane({
 
           {/* CWD breadcrumb */}
           {cwdLabel && (
-            <>
-              <span className="text-[9px] text-zinc-700/50">/</span>
+            <div
+              className={cn(
+                'flex items-center gap-1 rounded px-1.5 py-0.5',
+                isActive ? 'bg-white/[0.04]' : 'bg-transparent',
+              )}
+              title={cwd}
+            >
+              <FolderOpen
+                size={9}
+                className={cn(
+                  'shrink-0',
+                  isActive ? 'text-zinc-500' : 'text-zinc-700',
+                )}
+                strokeWidth={1.5}
+              />
               <span
-                className="max-w-[140px] truncate text-[9px] text-zinc-600"
-                title={cwd}
+                className={cn(
+                  'max-w-[180px] truncate text-[10px]',
+                  isActive ? 'text-zinc-400' : 'text-zinc-600',
+                )}
               >
                 {cwdLabel}
               </span>
-            </>
+            </div>
           )}
 
           {/* Maximized indicator */}
           {isMaximized && (
-            <span className="ml-1 rounded bg-white/[0.04] px-1 py-px text-[8px] font-medium text-zinc-600">
+            <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium text-zinc-500">
               ESC to restore
             </span>
           )}
         </div>
 
-        {/* Header actions — always visible when maximized, hover otherwise */}
-        <div
-          className={cn(
-            'flex shrink-0 items-center gap-0.5',
-            'transition-opacity duration-100',
-            isMaximized ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+        {/* Header actions — always visible */}
+        <div className="flex shrink-0 items-center gap-0.5">
+          {/* Split buttons — visible on hover */}
+          {!innerContext && (
+            <div
+              className={cn(
+                'flex items-center gap-0.5 transition-opacity duration-100',
+                'opacity-0 group-hover:opacity-100',
+              )}
+            >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useWorkspaceStore
+                    .getState()
+                    .addPane(activeProfile.id, 'right');
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+                title="Split Right (Ctrl+Shift+D)"
+              >
+                <PanelRight size={10} strokeWidth={1.5} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useWorkspaceStore
+                    .getState()
+                    .addPane(activeProfile.id, 'below');
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+                title="Split Below (Ctrl+Shift+E)"
+              >
+                <PanelBottom size={10} strokeWidth={1.5} />
+              </button>
+              <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
+            </div>
           )}
-        >
+
           {/* Maximize / Restore */}
           <button
             onClick={(e) => {
@@ -932,34 +991,34 @@ export function TerminalPane({
               }
             }}
             className={cn(
-              'flex h-4 w-4 items-center justify-center rounded',
+              'flex h-5 w-5 items-center justify-center rounded',
               'transition-all duration-100',
               isMaximized
-                ? 'text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'
-                : 'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+                ? 'text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
+                : 'text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300',
             )}
             title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
           >
             {isMaximized ? (
-              <Minimize2 size={8} strokeWidth={2} />
+              <Minimize2 size={10} strokeWidth={2} />
             ) : (
-              <Maximize2 size={8} strokeWidth={2} />
+              <Maximize2 size={10} strokeWidth={2} />
             )}
           </button>
-          {/* Close */}
+          {/* Close — always visible */}
           <button
             onClick={(e) => {
               e.stopPropagation();
               onClose();
             }}
             className={cn(
-              'flex h-4 w-4 items-center justify-center rounded',
+              'flex h-5 w-5 items-center justify-center rounded',
               'transition-all duration-100',
-              'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+              'text-zinc-600 hover:bg-red-500/[0.1] hover:text-red-400',
             )}
-            title="Close pane (Ctrl+W)"
+            title="Close pane (Ctrl+Shift+W)"
           >
-            <X size={9} strokeWidth={2} />
+            <X size={10} strokeWidth={2} />
           </button>
         </div>
       </div>
