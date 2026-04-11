@@ -63,15 +63,20 @@ export function TerminalGrid() {
 
   const expandedPaneId = useWorkspaceStore((s) => s.expandedPaneId);
   const level2PaneIds = useWorkspaceStore((s) => s.level2PaneIds);
+  const level3PaneId = useWorkspaceStore((s) => s.level3PaneId);
 
   const allPanes = activeWorkspace?.panes ?? [];
-  // When expanded, only show the expanded pane + level 2 panes
+  // Level 3: show only the single maximized pane
+  // Level 2: show the expanded pane + level 2 panes
+  // Level 1: show all panes
   const panes =
-    expandedPaneId !== null
-      ? allPanes.filter(
-          (p) => p.id === expandedPaneId || level2PaneIds.includes(p.id),
-        )
-      : allPanes;
+    level3PaneId !== null
+      ? allPanes.filter((p) => p.id === level3PaneId)
+      : expandedPaneId !== null
+        ? allPanes.filter(
+            (p) => p.id === expandedPaneId || level2PaneIds.includes(p.id),
+          )
+        : allPanes;
   const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
 
   const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
@@ -182,6 +187,25 @@ export function TerminalGrid() {
       programmaticChangeRef.current = true;
 
       const storeState = useWorkspaceStore.getState();
+
+      // Exiting level 3 — restore the level 2 layout
+      if (
+        storeState.expandedPaneId &&
+        !storeState.level3PaneId &&
+        storeState.preLevel3Layout
+      ) {
+        try {
+          api.fromJSON(storeState.preLevel3Layout as any);
+          previousPanesRef.current = panes.map((p) => p.id);
+          useWorkspaceStore.setState({ preLevel3Layout: null });
+          requestAnimationFrame(() => {
+            programmaticChangeRef.current = false;
+          });
+          return;
+        } catch {
+          // fall through to manual rebuild
+        }
+      }
 
       // Collapsing from level 2 — restore the pre-expand layout
       if (!storeState.expandedPaneId && storeState.preExpandLayout) {

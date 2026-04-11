@@ -97,6 +97,10 @@ interface WorkspaceState {
   preExpandLayout: unknown;
   /** Dockview layout saved from level 2 (for re-expansion) */
   level2Layout: unknown;
+  /** Level 3 — single pane maximized within level 2 (no splits allowed) */
+  level3PaneId: string | null;
+  /** Dockview layout saved before entering level 3 */
+  preLevel3Layout: unknown;
 
   // Workspace tab actions
   addWorkspace: (name: string, cwd?: string, profileId?: string) => string;
@@ -109,6 +113,9 @@ interface WorkspaceState {
   // Level 2 — expand a single pane full-screen
   expandPane: (paneId: string) => void;
   collapsePane: () => void;
+  // Level 3 — maximize one terminal within level 2
+  enterLevel3: (paneId: string) => void;
+  exitLevel3: () => void;
 
   // Pane actions (scoped to active workspace)
   setActivePaneId: (id: string | null) => void;
@@ -159,6 +166,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   level2PaneIds: [],
   preExpandLayout: null,
   level2Layout: null,
+  level3PaneId: null,
+  preLevel3Layout: null,
   profiles: (() => {
     const saved = loadProfileColors();
     return DEFAULT_PROFILES.map((p) => ({
@@ -354,6 +363,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       expandedPaneId: null,
       // Keep level2PaneIds so re-expand knows which panes belong to level 2
       level2Layout,
+      level3PaneId: null,
+      preLevel3Layout: null,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
+  enterLevel3: (paneId) => {
+    // Save level 2 Dockview layout, then show only this one pane
+    let preLevel3Layout: unknown = null;
+    try {
+      if (dockviewApiRef.current)
+        preLevel3Layout = dockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
+    }
+
+    set((s) => ({
+      level3PaneId: paneId,
+      preLevel3Layout,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
+  exitLevel3: () => {
+    set((s) => ({
+      level3PaneId: null,
       layoutVersion: s.layoutVersion + 1,
     }));
   },
@@ -365,6 +400,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   addPane: (profileId, direction = 'right') =>
     set((state) => {
+      // Block adding panes in level 3
+      if (state.level3PaneId) return state;
+
       const ws = getActive(state);
       if (!ws) {
         // No workspace — create one
@@ -401,6 +439,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   addPaneWithCwd: (profileId, cwd, direction = 'right') =>
     set((state) => {
+      if (state.level3PaneId) return state;
       const ws = getActive(state);
       if (!ws) return state;
 
@@ -542,11 +581,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   toggleMaximize: (paneId) => {
     const state = get();
-    if (state.expandedPaneId) {
-      // Already in level 2 — collapse back to grid
-      state.collapsePane();
+    if (state.level3PaneId) {
+      // In level 3 — go back to level 2
+      state.exitLevel3();
+    } else if (state.expandedPaneId) {
+      // In level 2 — enter level 3 (maximize single terminal)
+      state.enterLevel3(paneId);
     } else {
-      // Enter level 2
+      // In level 1 — enter level 2
       state.expandPane(paneId);
     }
   },

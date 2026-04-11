@@ -39,6 +39,11 @@ export function useGlobalShortcuts() {
           store.setShowCommandPalette(false);
           return;
         }
+        if (store.level3PaneId) {
+          e.preventDefault();
+          store.exitLevel3();
+          return;
+        }
         if (store.expandedPaneId) {
           e.preventDefault();
           store.collapsePane();

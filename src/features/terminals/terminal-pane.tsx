@@ -240,6 +240,12 @@ export function TerminalPane({
         if (e.altKey && /^[1-9]$/.test(e.key)) return false;
         if (e.ctrlKey && e.key === 'Enter') return false;
         if (e.ctrlKey && e.altKey && e.key.startsWith('Arrow')) return false;
+        if (e.ctrlKey && e.shiftKey && e.key === 'Delete') return false;
+        // Pass Escape through when in level 2+ so global handler can collapse
+        if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+          const s = useWorkspaceStore.getState();
+          if (s.expandedPaneId) return false;
+        }
         return true;
       });
     },
