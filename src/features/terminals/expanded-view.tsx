@@ -124,11 +124,25 @@ export function ExpandedView() {
       previousPanesRef.current = panes.map((p) => p.id);
       previousLayoutVersionRef.current = layoutVersion;
 
-      // Restore saved layout for this workspace
+      // Only restore layout if it has panel data matching current panes
+      // (prevents stale layouts from old model bleeding in wrong terminals)
       if (workspace?.dockviewLayout) {
         try {
-          event.api.fromJSON(workspace.dockviewLayout as any);
-          return;
+          const layout = workspace.dockviewLayout as any;
+          const savedPanelIds = new Set(
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+            (layout?.panels ?? []).map((p: any) => p?.id).filter(Boolean),
+          );
+          const currentPaneIds = new Set(panes.map((p) => p.id));
+          // Only restore if saved panels match current panes
+          const allMatch =
+            savedPanelIds.size > 0 &&
+            savedPanelIds.size === currentPaneIds.size &&
+            [...savedPanelIds].every((id) => currentPaneIds.has(id as string));
+          if (allMatch) {
+            event.api.fromJSON(layout);
+            return;
+          }
         } catch {
           // fall through to manual build
         }

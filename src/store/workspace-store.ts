@@ -665,6 +665,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             ws.activePaneId && validIds.has(ws.activePaneId)
               ? ws.activePaneId
               : (sanitizedPanes[0]?.id ?? null),
+          // Clear stale dockviewLayout from old single-grid model
+          dockviewLayout: null,
         };
       })
       .filter((ws) => ws.panes.length > 0);
@@ -674,16 +676,47 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return false;
     }
 
+    // Migrate: split multi-pane workspaces into one workspace per pane.
+    // In the two-layer model, each workspace = one project cell in layer 1.
+    // Extra panes become their own workspaces.
+    const migratedWorkspaces: WorkspaceTab[] = [];
+    for (const ws of validWorkspaces) {
+      if (ws.panes.length <= 1) {
+        migratedWorkspaces.push(ws);
+      } else {
+        // First pane keeps the original workspace
+        const [first, ...rest] = ws.panes;
+        migratedWorkspaces.push({
+          ...ws,
+          panes: [first!],
+          activePaneId: first!.id,
+          dockviewLayout: null,
+        });
+        // Each remaining pane becomes its own workspace
+        for (const pane of rest) {
+          const profile =
+            profiles.find((p) => p.id === pane.profileId) ?? defaultProfile;
+          migratedWorkspaces.push({
+            ...createWorkspaceTab(profile.name, pane.cwd),
+            panes: [
+              { ...pane, dockviewPosition: undefined, splitFrom: undefined },
+            ],
+            activePaneId: pane.id,
+          });
+        }
+      }
+    }
+
     const activeId =
       saved.activeWorkspaceId &&
-      validWorkspaces.some((w) => w.id === saved.activeWorkspaceId)
+      migratedWorkspaces.some((w) => w.id === saved.activeWorkspaceId)
         ? saved.activeWorkspaceId
-        : validWorkspaces[0]!.id;
+        : migratedWorkspaces[0]!.id;
 
     set((state) => ({
-      workspaces: validWorkspaces,
+      workspaces: migratedWorkspaces,
       activeWorkspaceId: activeId,
-      gridDockviewLayout: saved.gridDockviewLayout ?? null,
+      gridDockviewLayout: null, // Fresh grid layout for new model
       layoutVersion: state.layoutVersion + 1,
     }));
 
