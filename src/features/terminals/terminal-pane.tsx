@@ -241,10 +241,25 @@ export function TerminalPane({
         if (e.ctrlKey && e.key === 'Enter') return false;
         if (e.ctrlKey && e.altKey && e.key.startsWith('Arrow')) return false;
         if (e.ctrlKey && e.shiftKey && e.key === 'Delete') return false;
-        // Pass Escape through when in level 2+ so global handler can collapse
-        if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        // Handle Escape directly — collapse levels
+        if (
+          e.key === 'Escape' &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          e.type === 'keydown'
+        ) {
           const s = useWorkspaceStore.getState();
-          if (s.expandedPaneId) return false;
+          if (s.level3PaneId) {
+            e.preventDefault();
+            s.exitLevel3();
+            return false;
+          }
+          if (s.expandedPaneId) {
+            e.preventDefault();
+            s.collapsePane();
+            return false;
+          }
         }
         return true;
       });
