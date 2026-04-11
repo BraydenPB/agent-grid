@@ -460,6 +460,47 @@ describe('project actions', () => {
   });
 });
 
+// ── Worktree workspace ──
+
+describe('addWorktreeWorkspace', () => {
+  it('clones panes from current workspace with new cwd', () => {
+    useWorkspaceStore.getState().addProject('My Project', '/repo');
+    useWorkspaceStore.getState().addPane(shellId);
+    useWorkspaceStore.getState().addPane(shellId);
+    const originalPanes = ws()!.panes;
+    expect(originalPanes).toHaveLength(2);
+
+    const wsId = useWorkspaceStore
+      .getState()
+      .addWorktreeWorkspace('/repo-wt', 'feat/branch');
+
+    const state = useWorkspaceStore.getState();
+    const newWs = state.workspaces[wsId];
+    expect(newWs).toBeDefined();
+    expect(newWs!.worktreePath).toBe('/repo-wt');
+    expect(newWs!.worktreeBranch).toBe('feat/branch');
+    expect(newWs!.panes).toHaveLength(2);
+
+    // Panes should have new IDs but same profiles
+    for (let i = 0; i < newWs!.panes.length; i++) {
+      expect(newWs!.panes[i]!.id).not.toBe(originalPanes[i]!.id);
+      expect(newWs!.panes[i]!.profileId).toBe(originalPanes[i]!.profileId);
+      expect(newWs!.panes[i]!.cwd).toBe('/repo-wt');
+    }
+
+    // Should switch to the new workspace
+    const project = state.projects.find((p) => p.id === state.activeProjectId);
+    expect(project?.activeWorkspaceId).toBe(wsId);
+  });
+
+  it('returns empty string when no project exists', () => {
+    const result = useWorkspaceStore
+      .getState()
+      .addWorktreeWorkspace('/repo-wt', 'branch');
+    expect(result).toBe('');
+  });
+});
+
 // ── restoreLayout ──
 
 describe('restoreLayout', () => {

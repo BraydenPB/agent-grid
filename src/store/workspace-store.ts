@@ -293,6 +293,14 @@ export interface WorkspaceState {
   addProfile: (profile: TerminalProfile) => void;
   updateProfileColor: (profileId: string, color: string) => void;
 
+  // Worktree
+  showWorktreeDialog: boolean;
+  setShowWorktreeDialog: (show: boolean) => void;
+  addWorktreeWorkspace: (
+    worktreePath: string,
+    worktreeBranch: string,
+  ) => string;
+
   // UI actions
   setProjectsPath: (path: string) => void;
   setShowProjectBrowser: (show: boolean) => void;
@@ -335,6 +343,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   changeDirPaneId: null,
   pendingCwd: null,
   showCommandPalette: false,
+  showWorktreeDialog: false,
   customLayouts: loadNamedLayouts(),
 
   /* ── Project actions ── */
@@ -1066,6 +1075,62 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setPendingCwd: (paneId, path) => set({ pendingCwd: { paneId, path } }),
   clearPendingCwd: () => set({ pendingCwd: null }),
   setShowCommandPalette: (show) => set({ showCommandPalette: show }),
+  setShowWorktreeDialog: (show) => set({ showWorktreeDialog: show }),
+
+  /* ── Worktree workspace ── */
+
+  addWorktreeWorkspace: (worktreePath, worktreeBranch) => {
+    const state = get();
+    const project = getActiveProject(state);
+    if (!project) return '';
+
+    const currentWs = state.workspaces[project.activeWorkspaceId];
+
+    // Clone panes from current workspace with new IDs and updated cwd
+    const clonedPanes: Pane[] = (currentWs?.panes ?? []).map((p) => ({
+      ...p,
+      id: generateId(),
+      cwd: worktreePath,
+      dockviewPosition: undefined,
+    }));
+
+    const now = new Date().toISOString();
+    const ws: ProjectWorkspace = {
+      id: generateId(),
+      projectId: project.id,
+      name: worktreeBranch,
+      worktreePath,
+      worktreeBranch,
+      panes: clonedPanes,
+      activePaneId: clonedPanes[0]?.id ?? null,
+      maximizedPaneId: null,
+      activePreset: null,
+      dockviewLayout: null, // Dockview rebuilds from pane positions
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const { dockviewLayout, expansionReset } =
+      collapseAndCaptureOutgoing(state);
+
+    set((s) => ({
+      workspaces: {
+        ...updateWorkspaceById(s.workspaces, project.activeWorkspaceId, {
+          dockviewLayout,
+        }),
+        [ws.id]: ws,
+      },
+      projects: updateProject(s.projects, project.id, {
+        workspaceIds: [...project.workspaceIds, ws.id],
+        activeWorkspaceId: ws.id,
+      }),
+      ...expansionReset,
+      showWorktreeDialog: false,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+
+    return ws.id;
+  },
 
   /* ── Layout persistence ── */
 

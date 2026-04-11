@@ -1,9 +1,10 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, GitBranch } from 'lucide-react';
 import {
   useWorkspaceStore,
   getProjectWorkspaceList,
   getActiveWorkspaceId,
+  getActiveProject,
 } from '@/store/workspace-store';
 import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
 import { cn } from '@/lib/utils';
@@ -144,6 +145,19 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
         </span>
       )}
 
+      {/* Branch indicator */}
+      {ws.worktreeBranch && (
+        <span
+          className={cn(
+            'flex items-center gap-0.5 text-[9px]',
+            isActive ? 'text-zinc-500' : 'text-zinc-700',
+          )}
+        >
+          <GitBranch size={9} strokeWidth={2} />
+          <span className="max-w-[60px] truncate">{ws.worktreeBranch}</span>
+        </span>
+      )}
+
       {/* Pane count badge */}
       {ws.panes.length > 0 && (
         <span
@@ -198,6 +212,10 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
 export function TabStrip() {
   const workspaces = useWorkspaceStore(getProjectWorkspaceList);
   const addWorkspace = useWorkspaceStore((s) => s.addWorkspace);
+  const setShowWorktreeDialog = useWorkspaceStore(
+    (s) => s.setShowWorktreeDialog,
+  );
+  const hasProjectPath = useWorkspaceStore((s) => !!getActiveProject(s)?.path);
 
   if (workspaces.length === 0) return null;
 
@@ -226,6 +244,21 @@ export function TabStrip() {
       >
         <Plus size={13} strokeWidth={2} />
       </button>
+
+      {/* New worktree button */}
+      {hasProjectPath && (
+        <button
+          onClick={() => setShowWorktreeDialog(true)}
+          className={cn(
+            'flex h-full shrink-0 items-center gap-1 px-2.5',
+            'text-zinc-700 transition-colors duration-100',
+            'hover:bg-white/[0.03] hover:text-zinc-400',
+          )}
+          title="New worktree"
+        >
+          <GitBranch size={11} strokeWidth={2} />
+        </button>
+      )}
     </div>
   );
 }

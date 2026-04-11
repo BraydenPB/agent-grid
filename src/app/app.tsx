@@ -7,6 +7,7 @@ import { BreadcrumbBar } from '@/components/breadcrumb-bar';
 import { TerminalGrid } from '@/features/terminals/terminal-grid';
 import { ProjectGrid } from '@/features/projects/project-grid';
 import { CommandPalette } from '@/features/command-palette/command-palette';
+import { WorktreeDialog } from '@/features/worktrees/worktree-dialog';
 import { useGlobalShortcuts } from '@/lib/use-global-shortcuts';
 import { useWorkspaceStore } from '@/store/workspace-store';
 
@@ -17,6 +18,10 @@ export function App() {
   const showCommandPalette = useWorkspaceStore((s) => s.showCommandPalette);
   const setShowCommandPalette = useWorkspaceStore(
     (s) => s.setShowCommandPalette,
+  );
+  const showWorktreeDialog = useWorkspaceStore((s) => s.showWorktreeDialog);
+  const setShowWorktreeDialog = useWorkspaceStore(
+    (s) => s.setShowWorktreeDialog,
   );
 
   useEffect(() => {
@@ -40,6 +45,9 @@ export function App() {
           <AnimatePresence>
             {showCommandPalette && (
               <CommandPalette onClose={() => setShowCommandPalette(false)} />
+            )}
+            {showWorktreeDialog && (
+              <WorktreeDialog onClose={() => setShowWorktreeDialog(false)} />
             )}
           </AnimatePresence>
         </main>

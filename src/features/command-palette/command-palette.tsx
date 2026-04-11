@@ -2,7 +2,11 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Command } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
+import {
+  useWorkspaceStore,
+  getActiveWorkspace,
+  getActiveProject,
+} from '@/store/workspace-store';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 
 /* ── Action registry ── */
@@ -198,6 +202,17 @@ function buildActions(): PaletteAction[] {
       action: () => store().setShowCommandPalette(true),
     },
   );
+
+  // Worktree — only if the active project has a path
+  const project = getActiveProject(store());
+  if (project?.path) {
+    actions.push({
+      id: 'new-worktree',
+      label: 'New Worktree',
+      category: 'Workspaces',
+      action: () => store().setShowWorktreeDialog(true),
+    });
+  }
 
   return actions;
 }
