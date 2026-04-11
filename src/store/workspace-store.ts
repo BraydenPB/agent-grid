@@ -89,6 +89,13 @@ interface WorkspaceState {
   showCommandPalette: boolean;
   customLayouts: NamedLayout[];
 
+  /** Level 2 — pane ID that's currently expanded full-screen */
+  expandedPaneId: string | null;
+  /** Pane IDs created while in level 2 (removed on collapse) */
+  level2PaneIds: string[];
+  /** Dockview layout saved before entering level 2 */
+  preExpandLayout: unknown;
+
   // Workspace tab actions
   addWorkspace: (name: string, cwd?: string, profileId?: string) => string;
   removeWorkspace: (id: string) => void;
@@ -96,6 +103,10 @@ interface WorkspaceState {
   renameWorkspaceTab: (id: string, name: string) => void;
   nextWorkspace: () => void;
   prevWorkspace: () => void;
+
+  // Level 2 — expand a single pane full-screen
+  expandPane: (paneId: string) => void;
+  collapsePane: () => void;
 
   // Pane actions (scoped to active workspace)
   setActivePaneId: (id: string | null) => void;
@@ -142,6 +153,9 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   activeWorkspaceId: null,
+  expandedPaneId: null,
+  level2PaneIds: [],
+  preExpandLayout: null,
   profiles: (() => {
     const saved = loadProfileColors();
     return DEFAULT_PROFILES.map((p) => ({
@@ -289,6 +303,54 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       };
     }),
 
+  /* ── Level 2 — expand/collapse ── */
+
+  expandPane: (paneId) => {
+    // Save Dockview layout before expanding
+    let preExpandLayout: unknown = null;
+    try {
+      if (dockviewApiRef.current)
+        preExpandLayout = dockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
+    }
+
+    set((s) => ({
+      expandedPaneId: paneId,
+      level2PaneIds: [],
+      preExpandLayout,
+      // Clear maximize — we handle fullscreen ourselves
+      ...updateActive(s, () => ({ maximizedPaneId: null })),
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
+  collapsePane: () => {
+    const state = get();
+    const ws = getActive(state);
+    if (!ws) return;
+
+    // Remove level 2 panes from the workspace
+    const l2Ids = new Set(state.level2PaneIds);
+    for (const id of l2Ids) {
+      destroyTerminalEntry(id);
+    }
+    const remainingPanes = ws.panes.filter((p) => !l2Ids.has(p.id));
+
+    set((s) => ({
+      ...updateActive(s, () => ({
+        panes: remainingPanes,
+        activePaneId:
+          remainingPanes.find((p) => p.id === s.expandedPaneId)?.id ??
+          remainingPanes[0]?.id ??
+          null,
+      })),
+      expandedPaneId: null,
+      level2PaneIds: [],
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
   /* ── Pane actions (scoped to active workspace) ── */
 
   setActivePaneId: (id) =>
@@ -321,6 +383,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           activePaneId: paneWithSplit.id,
           activePreset: null,
         })),
+        // Track as level 2 pane if expanded
+        level2PaneIds: state.expandedPaneId
+          ? [...state.level2PaneIds, paneWithSplit.id]
+          : state.level2PaneIds,
         showProjectBrowser:
           ws.panes.length === 0 ? false : state.showProjectBrowser,
       };
@@ -467,14 +533,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }));
     }),
 
-  toggleMaximize: (paneId) =>
-    set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
-      return updateActive(state, () => ({
-        maximizedPaneId: ws.maximizedPaneId === paneId ? null : paneId,
-      }));
-    }),
+  toggleMaximize: (paneId) => {
+    const state = get();
+    if (state.expandedPaneId) {
+      // Already in level 2 — collapse back to grid
+      state.collapsePane();
+    } else {
+      // Enter level 2
+      state.expandPane(paneId);
+    }
+  },
 
   focusNextPane: () =>
     set((state) => {

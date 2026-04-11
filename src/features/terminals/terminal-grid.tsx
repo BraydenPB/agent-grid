@@ -61,7 +61,17 @@ export function TerminalGrid() {
   );
   const setChangeDirPaneId = useWorkspaceStore((s) => s.setChangeDirPaneId);
 
-  const panes = activeWorkspace?.panes ?? [];
+  const expandedPaneId = useWorkspaceStore((s) => s.expandedPaneId);
+  const level2PaneIds = useWorkspaceStore((s) => s.level2PaneIds);
+
+  const allPanes = activeWorkspace?.panes ?? [];
+  // When expanded, only show the expanded pane + level 2 panes
+  const panes =
+    expandedPaneId !== null
+      ? allPanes.filter(
+          (p) => p.id === expandedPaneId || level2PaneIds.includes(p.id),
+        )
+      : allPanes;
   const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
 
   const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
@@ -171,12 +181,29 @@ export function TerminalGrid() {
       previousLayoutVersionRef.current = layoutVersion;
       programmaticChangeRef.current = true;
 
-      // Restore saved Dockview layout if available
       const storeState = useWorkspaceStore.getState();
+
+      // Collapsing from level 2 — restore the pre-expand layout
+      if (!storeState.expandedPaneId && storeState.preExpandLayout) {
+        try {
+          api.fromJSON(storeState.preExpandLayout as any);
+          previousPanesRef.current = panes.map((p) => p.id);
+          // Clear saved layout now that it's restored
+          useWorkspaceStore.setState({ preExpandLayout: null });
+          requestAnimationFrame(() => {
+            programmaticChangeRef.current = false;
+          });
+          return;
+        } catch {
+          // fall through to manual rebuild
+        }
+      }
+
+      // Restore saved Dockview layout if available (workspace switch)
       const incomingWs = storeState.workspaces.find(
         (w) => w.id === storeState.activeWorkspaceId,
       );
-      if (incomingWs?.dockviewLayout) {
+      if (incomingWs?.dockviewLayout && !storeState.expandedPaneId) {
         try {
           api.fromJSON(incomingWs.dockviewLayout as any);
           previousPanesRef.current = panes.map((p) => p.id);

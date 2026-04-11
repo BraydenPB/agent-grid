@@ -39,9 +39,9 @@ export function useGlobalShortcuts() {
           store.setShowCommandPalette(false);
           return;
         }
-        if (ws?.maximizedPaneId) {
+        if (store.expandedPaneId) {
           e.preventDefault();
-          store.toggleMaximize(ws.maximizedPaneId);
+          store.collapsePane();
           return;
         }
         if (store.showProjectBrowser) {
