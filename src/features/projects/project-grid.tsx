@@ -1,7 +1,9 @@
 import { Plus, FolderOpen } from 'lucide-react';
 import { useWorkspaceStore, getActiveProject } from '@/store/workspace-store';
+import { hasTerminalEntry } from '@/lib/terminal-registry';
 import { cn } from '@/lib/utils';
 import type { Project } from '@/types';
+import { TerminalPreview } from '@/features/terminals/terminal-preview';
 
 function ProjectCard({ project }: { project: Project }) {
   const setActiveProject = useWorkspaceStore((s) => s.setActiveProject);
@@ -10,12 +12,14 @@ function ProjectCard({ project }: { project: Project }) {
   );
 
   const dirName = project.path?.split(/[\\/]/).pop() || project.name;
+  const mainPaneId = project.mainPaneId;
+  const showPreview = mainPaneId && hasTerminalEntry(mainPaneId);
 
   return (
     <button
       onClick={() => setActiveProject(project.id)}
       className={cn(
-        'group relative flex flex-col items-start gap-3 rounded-xl p-5',
+        'group relative flex flex-col overflow-hidden rounded-xl',
         'border border-white/[0.06] bg-white/[0.02]',
         'transition-all duration-150',
         'hover:border-white/[0.10] hover:bg-white/[0.04]',
@@ -25,33 +29,40 @@ function ProjectCard({ project }: { project: Project }) {
       {/* Color accent bar */}
       {project.color && (
         <span
-          className="absolute inset-x-0 top-0 h-[2px] rounded-t-xl"
+          className="absolute inset-x-0 top-0 z-10 h-[2px]"
           style={{ backgroundColor: project.color }}
         />
       )}
 
-      {/* Icon */}
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/[0.04]">
-        <FolderOpen size={18} className="text-zinc-500" strokeWidth={1.5} />
+      {/* Terminal preview or placeholder */}
+      <div className="relative h-28 w-full overflow-hidden bg-[#0a0a0f]">
+        {showPreview ? (
+          <TerminalPreview paneId={mainPaneId} />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <FolderOpen size={24} className="text-zinc-700" strokeWidth={1.5} />
+          </div>
+        )}
+        {/* Fade overlay at bottom */}
+        <div className="absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-zinc-950/80 to-transparent" />
       </div>
 
-      {/* Name */}
-      <div className="flex flex-col items-start gap-1">
+      {/* Info footer */}
+      <div className="flex flex-col items-start gap-1 px-4 py-3">
         <span className="text-sm font-medium text-zinc-200">
           {project.name}
         </span>
-        {project.path && (
-          <span className="text-[11px] leading-tight text-zinc-600">
-            {dirName}
+        <div className="flex items-center gap-2">
+          {project.path && (
+            <span className="text-[11px] leading-tight text-zinc-600">
+              {dirName}
+            </span>
+          )}
+          <span className="text-[10px] text-zinc-700">
+            {project.workspaceIds.length} ws
           </span>
-        )}
+        </div>
       </div>
-
-      {/* Workspace count */}
-      <span className="text-[10px] text-zinc-600">
-        {project.workspaceIds.length} workspace
-        {project.workspaceIds.length !== 1 ? 's' : ''}
-      </span>
     </button>
   );
 }
@@ -111,7 +122,7 @@ export function ProjectGrid() {
         /* Project grid */
         <div className="w-full max-w-4xl">
           <h2 className="mb-6 text-sm font-medium text-zinc-500">Projects</h2>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
             {projects.map((project) => (
               <ProjectCard key={project.id} project={project} />
             ))}

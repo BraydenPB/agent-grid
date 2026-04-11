@@ -21,9 +21,14 @@ import {
   ChevronRight,
   ChevronLeft,
   Palette,
+  Star,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
+import {
+  useWorkspaceStore,
+  getActiveWorkspace,
+  getActiveProject,
+} from '@/store/workspace-store';
 import type { TerminalProfile } from '@/types';
 
 const VIEWPORT_PAD = 8;
@@ -107,6 +112,11 @@ export function TerminalContextMenu({
   const currentProfile =
     profiles.find((p) => p.id === profileId) ?? profiles[0]!;
   const effectiveColor = paneColorOverride ?? currentProfile.color ?? '#6b7280';
+
+  const setMainPane = useWorkspaceStore((s) => s.setMainPane);
+  const isMainPane = useWorkspaceStore(
+    (s) => getActiveProject(s)?.mainPaneId === paneId,
+  );
 
   const handleColorUpdate = useCallback(
     (color: string) => {
@@ -582,6 +592,14 @@ export function TerminalContextMenu({
             </div>
           </div>
         )}
+
+        {/* Set as Main Terminal */}
+        <Item
+          icon={<Star size={12} />}
+          label={isMainPane ? 'Main Terminal' : 'Set as Main'}
+          hint={isMainPane ? '\u2713' : undefined}
+          onClick={act(() => setMainPane(paneId))}
+        />
 
         <Sep />
 
