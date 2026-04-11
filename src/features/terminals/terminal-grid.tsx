@@ -9,33 +9,44 @@ import { AnimatePresence } from 'framer-motion';
 import 'dockview/dist/styles/dockview.css';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { ProjectBrowser } from '@/features/projects/project-browser';
-import {
-  cleanupOrphanedEntries,
-  destroyTerminalEntry,
-} from '@/lib/terminal-registry';
-import { usePaneStatusStore } from '@/store/pane-status-store';
+import { cleanupOrphanedEntries } from '@/lib/terminal-registry';
 import { saveLayout } from '@/lib/layout-storage';
-import { dockviewApiRef } from '@/lib/dockview-api';
+import { gridDockviewApiRef, dockviewApiRef } from '@/lib/dockview-api';
 import type { TerminalProfile } from '@/types';
 import { TerminalPane } from './terminal-pane';
 
+/**
+ * Layer 1 — Main project grid.
+ *
+ * Shows one Dockview panel per workspace (project), each rendering the
+ * workspace's primary terminal (panes[0]).  Double-clicking a panel header
+ * or pressing Ctrl+Enter expands into layer 2 (ExpandedView).
+ */
+
 /** Thin wrapper that subscribes to the store for isActive */
-function TerminalPaneWrapper({
+function PrimaryPaneWrapper({
+  workspaceId,
   paneId,
   profile,
   cwd,
   onClose,
 }: {
+  workspaceId: string;
   paneId: string;
   profile: TerminalProfile;
   cwd?: string;
   onClose: () => void;
 }) {
-  const isActive = useWorkspaceStore((s) => {
-    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
-    return ws?.activePaneId === paneId;
-  });
+  const isActive = useWorkspaceStore(
+    (s) => s.activeWorkspaceId === workspaceId,
+  );
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const setActivePaneId = useWorkspaceStore((s) => s.setActivePaneId);
+
+  const handleFocus = useCallback(() => {
+    setActiveWorkspace(workspaceId);
+    setActivePaneId(paneId);
+  }, [workspaceId, paneId, setActiveWorkspace, setActivePaneId]);
 
   return (
     <TerminalPane
@@ -43,16 +54,14 @@ function TerminalPaneWrapper({
       profile={profile}
       initialCwd={cwd}
       isActive={isActive}
-      onFocus={() => setActivePaneId(paneId)}
+      onFocus={handleFocus}
       onClose={onClose}
     />
   );
 }
 
 export function TerminalGrid() {
-  const activeWorkspace = useWorkspaceStore((s) =>
-    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
-  );
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
   const profiles = useWorkspaceStore((s) => s.profiles);
   const layoutVersion = useWorkspaceStore((s) => s.layoutVersion);
   const showProjectBrowser = useWorkspaceStore((s) => s.showProjectBrowser);
@@ -60,64 +69,66 @@ export function TerminalGrid() {
     (s) => s.setShowProjectBrowser,
   );
   const setChangeDirPaneId = useWorkspaceStore((s) => s.setChangeDirPaneId);
+  const gridDockviewLayout = useWorkspaceStore((s) => s.gridDockviewLayout);
 
-  const panes = activeWorkspace?.panes ?? [];
-  const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
+  // Build a list of { workspaceId, pane, profile } for each workspace's primary pane
+  const gridPanels = useMemo(() => {
+    return workspaces
+      .filter((ws) => ws.panes.length > 0)
+      .map((ws) => {
+        const pane = ws.panes[0]!;
+        const profile =
+          profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+        return { workspaceId: ws.id, pane, profile, wsName: ws.name };
+      });
+  }, [workspaces, profiles]);
 
   const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
     null,
   );
-  const previousPanesRef = useRef<string[]>([]);
+  const previousPanelsRef = useRef<string[]>([]);
   const previousLayoutVersionRef = useRef(layoutVersion);
   const programmaticChangeRef = useRef(false);
 
   const handleReady = useCallback(
     (event: DockviewReadyEvent) => {
       setLocalDockviewApi(event.api);
+      gridDockviewApiRef.current = event.api;
       dockviewApiRef.current = event.api;
-      previousPanesRef.current = panes.map((p) => p.id);
+      previousPanelsRef.current = gridPanels.map((gp) => gp.workspaceId);
       previousLayoutVersionRef.current = layoutVersion;
 
-      // Restore saved Dockview layout if available
-      const savedLayout = useWorkspaceStore.getState();
-      const activeWs = savedLayout.workspaces.find(
-        (w) => w.id === savedLayout.activeWorkspaceId,
-      );
-      if (activeWs?.dockviewLayout) {
+      // Restore saved grid layout if available
+      if (gridDockviewLayout) {
         try {
-          event.api.fromJSON(activeWs.dockviewLayout as any);
+          event.api.fromJSON(gridDockviewLayout as any);
           return;
         } catch {
-          // fall through to manual rebuild
+          // fall through to manual build
         }
       }
 
+      // Build panels manually — one per workspace
       const addedIds = new Set<string>();
-      panes.forEach((pane, index) => {
-        const profile =
-          profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
-
+      gridPanels.forEach((gp, index) => {
         const addPanelConfig: any = {
-          id: pane.id,
-          component: 'terminal',
-          title: profile.name,
-          params: { paneId: pane.id, profile, cwd: pane.cwd },
+          id: gp.workspaceId,
+          component: 'projectCell',
+          title: gp.wsName,
+          params: {
+            workspaceId: gp.workspaceId,
+            paneId: gp.pane.id,
+            profile: gp.profile,
+            cwd: gp.pane.cwd,
+          },
         };
 
-        if (
-          pane.dockviewPosition?.direction &&
-          pane.dockviewPosition.referenceId &&
-          addedIds.has(pane.dockviewPosition.referenceId)
-        ) {
-          addPanelConfig.position = {
-            referencePanel: pane.dockviewPosition.referenceId,
-            direction: pane.dockviewPosition.direction,
-          };
-        } else if (index > 0 && addedIds.size > 0) {
-          const prevPane = panes[index - 1];
-          if (prevPane && addedIds.has(prevPane.id)) {
+        // Position: stack right of previous panel
+        if (index > 0 && addedIds.size > 0) {
+          const prev = gridPanels[index - 1];
+          if (prev && addedIds.has(prev.workspaceId)) {
             addPanelConfig.position = {
-              referencePanel: prevPane.id,
+              referencePanel: prev.workspaceId,
               direction: 'right',
             };
           }
@@ -125,44 +136,22 @@ export function TerminalGrid() {
 
         try {
           event.api.addPanel(addPanelConfig);
-          addedIds.add(pane.id);
+          addedIds.add(gp.workspaceId);
         } catch {
           try {
             delete addPanelConfig.position;
             event.api.addPanel(addPanelConfig);
-            addedIds.add(pane.id);
+            addedIds.add(gp.workspaceId);
           } catch {
-            /* panel truly can't be added */
+            /* skip */
           }
         }
       });
     },
-    [panes, profiles, layoutVersion],
+    [gridPanels, layoutVersion, gridDockviewLayout],
   );
 
-  // Clear activePreset when user manually rearranges panels
-  useEffect(() => {
-    if (!localDockviewApi) return;
-
-    const disposable = localDockviewApi.onDidLayoutChange(() => {
-      if (programmaticChangeRef.current) return;
-      const state = useWorkspaceStore.getState();
-      const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId);
-      if (ws?.activePreset) {
-        useWorkspaceStore.setState((s) => ({
-          workspaces: s.workspaces.map((w) =>
-            w.id === s.activeWorkspaceId ? { ...w, activePreset: null } : w,
-          ),
-        }));
-      }
-    });
-
-    return () => {
-      disposable.dispose();
-    };
-  }, [localDockviewApi]);
-
-  // Detect layout version change (preset applied or workspace switch) — rearrange Dockview
+  // Detect layout version change — full rebuild
   useEffect(() => {
     const api = localDockviewApi;
     if (!api) return;
@@ -171,15 +160,12 @@ export function TerminalGrid() {
       previousLayoutVersionRef.current = layoutVersion;
       programmaticChangeRef.current = true;
 
-      // Restore saved Dockview layout if available
+      // Try to restore saved grid layout
       const storeState = useWorkspaceStore.getState();
-      const incomingWs = storeState.workspaces.find(
-        (w) => w.id === storeState.activeWorkspaceId,
-      );
-      if (incomingWs?.dockviewLayout) {
+      if (storeState.gridDockviewLayout) {
         try {
-          api.fromJSON(incomingWs.dockviewLayout as any);
-          previousPanesRef.current = panes.map((p) => p.id);
+          api.fromJSON(storeState.gridDockviewLayout as any);
+          previousPanelsRef.current = gridPanels.map((gp) => gp.workspaceId);
           requestAnimationFrame(() => {
             programmaticChangeRef.current = false;
           });
@@ -196,31 +182,24 @@ export function TerminalGrid() {
       }
 
       const reAddedIds = new Set<string>();
-      panes.forEach((pane, index) => {
-        const profile =
-          profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
-
+      gridPanels.forEach((gp, index) => {
         const addPanelConfig: any = {
-          id: pane.id,
-          component: 'terminal',
-          title: profile.name,
-          params: { paneId: pane.id, profile, cwd: pane.cwd },
+          id: gp.workspaceId,
+          component: 'projectCell',
+          title: gp.wsName,
+          params: {
+            workspaceId: gp.workspaceId,
+            paneId: gp.pane.id,
+            profile: gp.profile,
+            cwd: gp.pane.cwd,
+          },
         };
 
-        if (
-          pane.dockviewPosition?.direction &&
-          pane.dockviewPosition.referenceId &&
-          reAddedIds.has(pane.dockviewPosition.referenceId)
-        ) {
-          addPanelConfig.position = {
-            referencePanel: pane.dockviewPosition.referenceId,
-            direction: pane.dockviewPosition.direction,
-          };
-        } else if (index > 0) {
-          const prevPane = panes[index - 1];
-          if (prevPane && reAddedIds.has(prevPane.id)) {
+        if (index > 0) {
+          const prev = gridPanels[index - 1];
+          if (prev && reAddedIds.has(prev.workspaceId)) {
             addPanelConfig.position = {
-              referencePanel: prevPane.id,
+              referencePanel: prev.workspaceId,
               direction: 'right',
             };
           }
@@ -228,94 +207,83 @@ export function TerminalGrid() {
 
         try {
           api.addPanel(addPanelConfig);
-          reAddedIds.add(pane.id);
+          reAddedIds.add(gp.workspaceId);
         } catch {
           try {
             delete addPanelConfig.position;
             api.addPanel(addPanelConfig);
-            reAddedIds.add(pane.id);
+            reAddedIds.add(gp.workspaceId);
           } catch {
             /* skip */
           }
         }
       });
 
-      previousPanesRef.current = panes.map((p) => p.id);
+      previousPanelsRef.current = gridPanels.map((gp) => gp.workspaceId);
       requestAnimationFrame(() => {
         programmaticChangeRef.current = false;
       });
       return;
     }
 
-    // Normal incremental sync — add/remove individual panes
-    const currentPaneIds = panes.map((p) => p.id);
+    // Incremental sync — add/remove panels as workspaces change
+    const currentIds = gridPanels.map((gp) => gp.workspaceId);
     const hasChanges =
-      currentPaneIds.length !== previousPanesRef.current.length ||
-      currentPaneIds.some((id, i) => id !== previousPanesRef.current[i]);
+      currentIds.length !== previousPanelsRef.current.length ||
+      currentIds.some((id, i) => id !== previousPanelsRef.current[i]);
 
-    if (hasChanges) programmaticChangeRef.current = true;
+    if (!hasChanges) return;
+    programmaticChangeRef.current = true;
 
-    // Remove panels that no longer exist in store
-    const removedPaneIds = previousPanesRef.current.filter(
-      (id) => !currentPaneIds.includes(id),
+    // Remove panels for deleted workspaces
+    const removed = previousPanelsRef.current.filter(
+      (id) => !currentIds.includes(id),
     );
-    removedPaneIds.forEach((id) => {
+    removed.forEach((id) => {
       try {
         const panel = api.getPanel(id);
         if (panel) api.removePanel(panel);
       } catch {
-        // Panel may already be gone
+        /* already gone */
       }
-      destroyTerminalEntry(id);
-      usePaneStatusStore.getState().removeStatus(id);
     });
 
-    // Add new panels
-    const newPaneIds = currentPaneIds.filter(
-      (id) => !previousPanesRef.current.includes(id),
+    // Add panels for new workspaces
+    const added = currentIds.filter(
+      (id) => !previousPanelsRef.current.includes(id),
     );
-
-    newPaneIds.forEach((paneId) => {
-      const pane = panes.find((p) => p.id === paneId);
-      if (!pane) return;
-
-      const profile =
-        profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+    added.forEach((wsId) => {
+      const gp = gridPanels.find((g) => g.workspaceId === wsId);
+      if (!gp) return;
 
       const addPanelConfig: any = {
-        id: pane.id,
-        component: 'terminal',
-        title: profile.name,
-        params: { paneId: pane.id, profile, cwd: pane.cwd },
+        id: gp.workspaceId,
+        component: 'projectCell',
+        title: gp.wsName,
+        params: {
+          workspaceId: gp.workspaceId,
+          paneId: gp.pane.id,
+          profile: gp.profile,
+          cwd: gp.pane.cwd,
+        },
       };
 
-      const panelExists = (id: string) => {
-        try {
-          return !!api.getPanel(id);
-        } catch {
-          return false;
-        }
-      };
-
-      if (pane.splitFrom?.paneId && panelExists(pane.splitFrom.paneId)) {
-        addPanelConfig.position = {
-          referencePanel: pane.splitFrom.paneId,
-          direction: pane.splitFrom.direction,
-        };
-      } else if (
-        pane.dockviewPosition?.direction &&
-        pane.dockviewPosition.referenceId &&
-        panelExists(pane.dockviewPosition.referenceId)
-      ) {
-        addPanelConfig.position = {
-          referencePanel: pane.dockviewPosition.referenceId,
-          direction: pane.dockviewPosition.direction,
-        };
-      } else {
-        const prevId = currentPaneIds[currentPaneIds.indexOf(paneId) - 1];
-        if (prevId && panelExists(prevId)) {
+      // Place right of last existing panel
+      const existingIds = currentIds.filter(
+        (id) => id !== wsId && !added.includes(id),
+      );
+      const lastExisting = existingIds[existingIds.length - 1];
+      if (lastExisting) {
+        const panelExists = (() => {
+          try {
+            return !!api.getPanel(lastExisting);
+          } catch {
+            return false;
+          }
+        })();
+        if (panelExists) {
           addPanelConfig.position = {
-            referencePanel: prevId,
+            referencePanel: lastExisting,
             direction: 'right',
           };
         }
@@ -333,34 +301,11 @@ export function TerminalGrid() {
       }
     });
 
-    previousPanesRef.current = currentPaneIds;
-    if (hasChanges) {
-      requestAnimationFrame(() => {
-        programmaticChangeRef.current = false;
-      });
-    }
-  }, [localDockviewApi, panes, profiles, layoutVersion]);
-
-  // Handle maximize/restore via Dockview API
-  useEffect(() => {
-    const api = localDockviewApi;
-    if (!api) return;
-
-    if (maximizedPaneId) {
-      try {
-        const panel = api.getPanel(maximizedPaneId);
-        if (panel) api.maximizeGroup(panel);
-      } catch {
-        /* Panel may not exist */
-      }
-    } else {
-      try {
-        if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
-      } catch {
-        /* No maximized group */
-      }
-    }
-  }, [localDockviewApi, maximizedPaneId]);
+    previousPanelsRef.current = currentIds;
+    requestAnimationFrame(() => {
+      programmaticChangeRef.current = false;
+    });
+  }, [localDockviewApi, gridPanels, layoutVersion]);
 
   // Clean up orphaned registry entries — consider ALL workspaces' panes as alive
   useEffect(() => {
@@ -368,57 +313,60 @@ export function TerminalGrid() {
       .getState()
       .workspaces.flatMap((w) => w.panes.map((p) => p.id));
     cleanupOrphanedEntries(allPaneIds);
-  }, [panes]);
+  }, [gridPanels]);
 
-  // Debounced layout save to localStorage
+  // Debounced layout save
   useEffect(() => {
     const timer = setTimeout(() => {
       const state = useWorkspaceStore.getState();
       const api = localDockviewApi;
 
-      // Update active workspace's Dockview layout before saving
-      let workspaces = state.workspaces;
-      if (api && state.activeWorkspaceId) {
+      // Save grid Dockview layout
+      if (api) {
         try {
-          const dockviewLayout = api.toJSON();
-          workspaces = workspaces.map((w) =>
-            w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
-          );
+          const gridLayout = api.toJSON();
+          useWorkspaceStore.setState({ gridDockviewLayout: gridLayout });
         } catch {
           /* ignore */
         }
       }
 
-      saveLayout(workspaces, state.activeWorkspaceId);
+      saveLayout(
+        state.workspaces,
+        state.activeWorkspaceId,
+        state.gridDockviewLayout,
+      );
     }, 500);
     return () => clearTimeout(timer);
-  }, [localDockviewApi, panes, maximizedPaneId]);
+  }, [localDockviewApi, gridPanels]);
 
-  const handlePanelClose = useCallback((panelId: string) => {
-    useWorkspaceStore.getState().removePane(panelId);
+  const handlePanelClose = useCallback((workspaceId: string) => {
+    useWorkspaceStore.getState().removeWorkspace(workspaceId);
   }, []);
 
   const components = useMemo(
     () => ({
-      terminal: (
+      projectCell: (
         props: IDockviewPanelProps<{
+          workspaceId: string;
           paneId: string;
           profile: TerminalProfile;
           cwd?: string;
         }>,
       ) => (
-        <TerminalPaneWrapper
+        <PrimaryPaneWrapper
+          workspaceId={props.params.workspaceId}
           paneId={props.params.paneId}
           profile={props.params.profile}
           cwd={props.params.cwd}
-          onClose={() => handlePanelClose(props.params.paneId)}
+          onClose={() => handlePanelClose(props.params.workspaceId)}
         />
       ),
     }),
     [handlePanelClose],
   );
 
-  if (panes.length === 0) {
+  if (gridPanels.length === 0) {
     return <ProjectBrowser />;
   }
 

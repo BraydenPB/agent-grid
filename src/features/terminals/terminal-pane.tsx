@@ -120,9 +120,18 @@ export function TerminalPane({
   const effectiveColor = paneColorOverride ?? activeProfile.color ?? '#636d83';
 
   const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
+  const expandWorkspace = useWorkspaceStore((s) => s.expandWorkspace);
+  const isExpanded = useWorkspaceStore((s) => s.expandedWorkspaceId !== null);
   const isMaximized = useWorkspaceStore((s) => {
     const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
     return ws?.maximizedPaneId === paneId;
+  });
+  const parentWorkspaceId = useWorkspaceStore((s) => {
+    // Find which workspace this pane belongs to
+    for (const ws of s.workspaces) {
+      if (ws.panes.some((p) => p.id === paneId)) return ws.id;
+    }
+    return null;
   });
 
   /* ── Addon loading ── */
@@ -206,11 +215,30 @@ export function TerminalPane({
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'D' && e.type === 'keydown') {
-          useWorkspaceStore.getState().addPane(initialProfile.id, 'right');
+          const s = useWorkspaceStore.getState();
+          // Add pane first (sync store update), then expand if needed
+          s.addPane(initialProfile.id, 'right');
+          if (!s.expandedWorkspaceId) {
+            for (const ws of s.workspaces) {
+              if (ws.panes.some((p) => p.id === paneId)) {
+                useWorkspaceStore.getState().expandWorkspace(ws.id);
+                break;
+              }
+            }
+          }
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'E' && e.type === 'keydown') {
-          useWorkspaceStore.getState().addPane(initialProfile.id, 'below');
+          const s = useWorkspaceStore.getState();
+          s.addPane(initialProfile.id, 'below');
+          if (!s.expandedWorkspaceId) {
+            for (const ws of s.workspaces) {
+              if (ws.panes.some((p) => p.id === paneId)) {
+                useWorkspaceStore.getState().expandWorkspace(ws.id);
+                break;
+              }
+            }
+          }
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'W' && e.type === 'keydown') {
@@ -468,10 +496,16 @@ export function TerminalPane({
     setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
   }, []);
 
-  /* ── Double-click header to maximize/restore ── */
+  /* ── Double-click header to expand (layer 1) or maximize (layer 2) ── */
   const handleHeaderDoubleClick = useCallback(() => {
-    toggleMaximize(paneId);
-  }, [paneId, toggleMaximize]);
+    if (isExpanded) {
+      // Layer 2 — maximize/restore within the expanded view
+      toggleMaximize(paneId);
+    } else if (parentWorkspaceId) {
+      // Layer 1 — expand into layer 2
+      expandWorkspace(parentWorkspaceId);
+    }
+  }, [paneId, isExpanded, parentWorkspaceId, toggleMaximize, expandWorkspace]);
 
   /* ── Terminal initialization / reattachment ── */
   useEffect(() => {
@@ -688,7 +722,9 @@ export function TerminalPane({
         )}
         style={{ '--accent-1': effectiveColor } as React.CSSProperties}
         onDoubleClick={handleHeaderDoubleClick}
-        title="Double-click to maximize"
+        title={
+          isExpanded ? 'Double-click to maximize' : 'Double-click to expand'
+        }
       >
         <div className="flex min-w-0 items-center gap-2">
           {/* Profile color dot with status indicator */}
@@ -747,8 +783,8 @@ export function TerminalPane({
             </div>
           )}
 
-          {/* Maximized indicator */}
-          {isMaximized && (
+          {/* Maximized indicator (only in layer 2) */}
+          {isExpanded && isMaximized && (
             <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium text-zinc-500">
               ESC to restore
             </span>
@@ -757,41 +793,51 @@ export function TerminalPane({
 
         {/* Header actions — always visible */}
         <div className="flex shrink-0 items-center gap-0.5">
-          {/* Split buttons — visible on hover */}
-          <div
-            className={cn(
-              'flex items-center gap-0.5 transition-opacity duration-100',
-              'opacity-0 group-hover:opacity-100',
-            )}
-          >
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                useWorkspaceStore.getState().addPane(activeProfile.id, 'right');
-              }}
-              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
-              title="Split Right (Ctrl+Shift+D)"
+          {/* Split buttons — only in layer 2, visible on hover */}
+          {isExpanded && (
+            <div
+              className={cn(
+                'flex items-center gap-0.5 transition-opacity duration-100',
+                'opacity-0 group-hover:opacity-100',
+              )}
             >
-              <PanelRight size={10} strokeWidth={1.5} />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                useWorkspaceStore.getState().addPane(activeProfile.id, 'below');
-              }}
-              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
-              title="Split Below (Ctrl+Shift+E)"
-            >
-              <PanelBottom size={10} strokeWidth={1.5} />
-            </button>
-            <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
-          </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useWorkspaceStore
+                    .getState()
+                    .addPane(activeProfile.id, 'right');
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+                title="Split Right (Ctrl+Shift+D)"
+              >
+                <PanelRight size={10} strokeWidth={1.5} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useWorkspaceStore
+                    .getState()
+                    .addPane(activeProfile.id, 'below');
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+                title="Split Below (Ctrl+Shift+E)"
+              >
+                <PanelBottom size={10} strokeWidth={1.5} />
+              </button>
+              <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
+            </div>
+          )}
 
-          {/* Maximize / Restore */}
+          {/* Expand (layer 1) or Maximize/Restore (layer 2) */}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              toggleMaximize(paneId);
+              if (isExpanded) {
+                toggleMaximize(paneId);
+              } else if (parentWorkspaceId) {
+                expandWorkspace(parentWorkspaceId);
+              }
             }}
             className={cn(
               'flex h-5 w-5 items-center justify-center rounded',
@@ -800,7 +846,13 @@ export function TerminalPane({
                 ? 'text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
                 : 'text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300',
             )}
-            title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
+            title={
+              isExpanded
+                ? isMaximized
+                  ? 'Restore (Esc)'
+                  : 'Maximize (Ctrl+Enter)'
+                : 'Expand project (Ctrl+Enter)'
+            }
           >
             {isMaximized ? (
               <Minimize2 size={10} strokeWidth={2} />
@@ -860,12 +912,20 @@ export function TerminalPane({
         onSwitchProfile={(profile) => void handleSwitchProfile(profile)}
         cwd={cwd}
         onChangeDirectory={handleChangeDirectory}
-        onSplitRight={() =>
-          useWorkspaceStore.getState().addPane(activeProfile.id, 'right')
-        }
-        onSplitBelow={() =>
-          useWorkspaceStore.getState().addPane(activeProfile.id, 'below')
-        }
+        onSplitRight={() => {
+          const s = useWorkspaceStore.getState();
+          s.addPane(activeProfile.id, 'right');
+          if (!s.expandedWorkspaceId && parentWorkspaceId) {
+            useWorkspaceStore.getState().expandWorkspace(parentWorkspaceId);
+          }
+        }}
+        onSplitBelow={() => {
+          const s = useWorkspaceStore.getState();
+          s.addPane(activeProfile.id, 'below');
+          if (!s.expandedWorkspaceId && parentWorkspaceId) {
+            useWorkspaceStore.getState().expandWorkspace(parentWorkspaceId);
+          }
+        }}
         onClose_pane={onClose}
       />
     </div>

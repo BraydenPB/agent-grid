@@ -144,13 +144,144 @@ fn list_projects(dir: String) -> Result<Vec<ProjectInfo>, String> {
     Ok(projects)
 }
 
+/* ── Worktree commands ── */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: String,
+    pub is_main: bool,
+}
+
+#[tauri::command]
+fn list_worktrees(cwd: String) -> Result<Vec<WorktreeInfo>, String> {
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git worktree list failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut worktrees = Vec::new();
+    let mut current_path = String::new();
+    let mut current_branch = String::new();
+    let mut is_bare = false;
+
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if !current_path.is_empty() && !is_bare {
+                worktrees.push(WorktreeInfo {
+                    path: current_path
+                        .strip_prefix("\\\\?\\")
+                        .unwrap_or(&current_path)
+                        .to_string(),
+                    branch: current_branch.clone(),
+                    is_main: worktrees.is_empty(),
+                });
+            }
+            current_path = path.to_string();
+            current_branch = String::new();
+            is_bare = false;
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            current_branch = branch.to_string();
+        } else if line == "bare" {
+            is_bare = true;
+        } else if line == "detached" {
+            current_branch = "(detached)".to_string();
+        }
+    }
+
+    // Push the last entry
+    if !current_path.is_empty() && !is_bare {
+        worktrees.push(WorktreeInfo {
+            path: current_path
+                .strip_prefix("\\\\?\\")
+                .unwrap_or(&current_path)
+                .to_string(),
+            branch: current_branch,
+            is_main: worktrees.is_empty(),
+        });
+    }
+
+    Ok(worktrees)
+}
+
+#[tauri::command]
+fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, String> {
+    // Try to create worktree with a new branch
+    let output = std::process::Command::new("git")
+        .args(["worktree", "add", &path, "-b", &branch])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if output.status.success() {
+        // Return the absolute path of the created worktree
+        let wt_path = Path::new(&path);
+        let abs_path = if wt_path.is_absolute() {
+            wt_path.to_path_buf()
+        } else {
+            Path::new(&cwd).join(wt_path)
+        };
+        let result = abs_path
+            .canonicalize()
+            .unwrap_or(abs_path)
+            .to_string_lossy()
+            .to_string();
+        let result = result
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(&result)
+            .to_string();
+        return Ok(result);
+    }
+
+    // If branch already exists, try without -b (checkout existing branch)
+    let output2 = std::process::Command::new("git")
+        .args(["worktree", "add", &path, &branch])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    if output2.status.success() {
+        let wt_path = Path::new(&path);
+        let abs_path = if wt_path.is_absolute() {
+            wt_path.to_path_buf()
+        } else {
+            Path::new(&cwd).join(wt_path)
+        };
+        let result = abs_path
+            .canonicalize()
+            .unwrap_or(abs_path)
+            .to_string_lossy()
+            .to_string();
+        let result = result
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(&result)
+            .to_string();
+        return Ok(result);
+    }
+
+    let stderr = String::from_utf8_lossy(&output2.stderr);
+    Err(format!("git worktree add failed: {}", stderr))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
-        .invoke_handler(tauri::generate_handler![list_projects])
+        .invoke_handler(tauri::generate_handler![
+            list_projects,
+            list_worktrees,
+            create_worktree,
+        ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| eprintln!("Failed to run Tauri application: {}", e));
 }

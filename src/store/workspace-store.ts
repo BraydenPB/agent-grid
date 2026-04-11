@@ -14,7 +14,11 @@ import {
   saveProfileColors,
   type NamedLayout,
 } from '@/lib/layout-storage';
-import { dockviewApiRef } from '@/lib/dockview-api';
+import {
+  dockviewApiRef,
+  gridDockviewApiRef,
+  expandedDockviewApiRef,
+} from '@/lib/dockview-api';
 import { destroyTerminalEntry } from '@/lib/terminal-registry';
 
 /* ── Helpers ── */
@@ -53,9 +57,12 @@ function createWorkspaceTab(
   };
 }
 
-/** Get the active workspace from state */
+/** Get the workspace that pane actions should target.
+ *  When expanded (layer 2), targets the expanded workspace.
+ *  Otherwise targets the active workspace (layer 1 focus). */
 function getActive(state: WorkspaceState): WorkspaceTab | undefined {
-  return state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+  const targetId = state.expandedWorkspaceId ?? state.activeWorkspaceId;
+  return state.workspaces.find((w) => w.id === targetId);
 }
 
 /** Immutably update the active workspace */
@@ -80,6 +87,12 @@ function updateActive(
 interface WorkspaceState {
   workspaces: WorkspaceTab[];
   activeWorkspaceId: string | null;
+  /** Layer 2 — which project is currently expanded full-screen */
+  expandedWorkspaceId: string | null;
+  /** Saved Dockview layout for the layer 1 grid */
+  gridDockviewLayout: unknown;
+  /** Whether the top-level workspace tab strip is visible */
+  showTabStrip: boolean;
   profiles: TerminalProfile[];
   layoutVersion: number;
   projectsPath: string;
@@ -97,7 +110,11 @@ interface WorkspaceState {
   nextWorkspace: () => void;
   prevWorkspace: () => void;
 
-  // Pane actions (scoped to active workspace)
+  // Layer navigation
+  expandWorkspace: (id: string) => void;
+  collapseWorkspace: () => void;
+
+  // Pane actions (scoped to active workspace OR expanded workspace)
   setActivePaneId: (id: string | null) => void;
   addPane: (profileId: string, direction?: 'right' | 'below') => void;
   addPaneWithCwd: (
@@ -128,6 +145,7 @@ interface WorkspaceState {
   setPendingCwd: (paneId: string, path: string) => void;
   clearPendingCwd: () => void;
   setShowCommandPalette: (show: boolean) => void;
+  setShowTabStrip: (show: boolean) => void;
 
   // Layout persistence
   initProjectsPath: () => Promise<void>;
@@ -142,6 +160,9 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   activeWorkspaceId: null,
+  expandedWorkspaceId: null,
+  gridDockviewLayout: null,
+  showTabStrip: false,
   profiles: (() => {
     const saved = loadProfileColors();
     return DEFAULT_PROFILES.map((p) => ({
@@ -162,26 +183,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   addWorkspace: (name, cwd, profileId) => {
     const ws = createWorkspaceTab(name, cwd, profileId ?? 'system-shell');
 
-    // Save outgoing workspace's Dockview layout before switching
-    let dockviewLayout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        dockviewLayout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
+    set((s) => {
+      // If expanded (layer 2), add project but stay expanded
+      if (s.expandedWorkspaceId) {
+        return {
+          workspaces: [...s.workspaces, ws],
+          gridDockviewLayout: null, // Clear stale grid layout
+          showProjectBrowser: false,
+        };
+      }
 
-    set((s) => ({
-      workspaces: [
-        ...s.workspaces.map((w) =>
-          w.id === s.activeWorkspaceId ? { ...w, dockviewLayout } : w,
-        ),
-        ws,
-      ],
-      activeWorkspaceId: ws.id,
-      layoutVersion: s.layoutVersion + 1,
-      showProjectBrowser: false,
-    }));
+      // Layer 1 — add project and focus it in the grid
+      // Don't bump layoutVersion — let incremental sync handle it
+      return {
+        workspaces: [...s.workspaces, ws],
+        activeWorkspaceId: ws.id,
+        gridDockviewLayout: null, // Clear stale grid layout so rebuild works
+        showProjectBrowser: false,
+      };
+    });
 
     return ws.id;
   },
@@ -203,33 +223,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       nextActiveId = remaining[Math.min(idx, remaining.length - 1)]?.id ?? null;
     }
 
-    set((s) => ({
+    set({
       workspaces: remaining,
       activeWorkspaceId: nextActiveId,
-      layoutVersion: s.layoutVersion + 1,
-    }));
+      gridDockviewLayout: null, // Clear stale grid layout
+    });
   },
 
   setActiveWorkspace: (id) => {
     const state = get();
     if (state.activeWorkspaceId === id) return;
-
-    // Serialize current Dockview layout into the outgoing workspace
-    let dockviewLayout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        dockviewLayout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
-
-    set((s) => ({
-      workspaces: s.workspaces.map((w) =>
-        w.id === s.activeWorkspaceId ? { ...w, dockviewLayout } : w,
-      ),
-      activeWorkspaceId: id,
-      layoutVersion: s.layoutVersion + 1,
-    }));
+    set({ activeWorkspaceId: id });
   },
 
   renameWorkspaceTab: (id, name) =>
@@ -244,23 +248,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         (w) => w.id === state.activeWorkspaceId,
       );
       const nextIdx = (idx + 1) % state.workspaces.length;
-
-      // Save outgoing Dockview layout
-      let dockviewLayout: unknown = null;
-      try {
-        if (dockviewApiRef.current)
-          dockviewLayout = dockviewApiRef.current.toJSON();
-      } catch {
-        /* ignore */
-      }
-
-      return {
-        workspaces: state.workspaces.map((w) =>
-          w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
-        ),
-        activeWorkspaceId: state.workspaces[nextIdx]!.id,
-        layoutVersion: state.layoutVersion + 1,
-      };
+      return { activeWorkspaceId: state.workspaces[nextIdx]!.id };
     }),
 
   prevWorkspace: () =>
@@ -271,25 +259,52 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const prevIdx =
         (idx - 1 + state.workspaces.length) % state.workspaces.length;
-
-      let dockviewLayout: unknown = null;
-      try {
-        if (dockviewApiRef.current)
-          dockviewLayout = dockviewApiRef.current.toJSON();
-      } catch {
-        /* ignore */
-      }
-
-      return {
-        workspaces: state.workspaces.map((w) =>
-          w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
-        ),
-        activeWorkspaceId: state.workspaces[prevIdx]!.id,
-        layoutVersion: state.layoutVersion + 1,
-      };
+      return { activeWorkspaceId: state.workspaces[prevIdx]!.id };
     }),
 
-  /* ── Pane actions (scoped to active workspace) ── */
+  /* ── Layer navigation ── */
+
+  expandWorkspace: (id) => {
+    // Save layer 1 grid layout before expanding
+    let gridLayout: unknown = null;
+    try {
+      if (gridDockviewApiRef.current)
+        gridLayout = gridDockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
+    }
+
+    set((s) => ({
+      expandedWorkspaceId: id,
+      activeWorkspaceId: id,
+      gridDockviewLayout: gridLayout,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
+  collapseWorkspace: () => {
+    // Save expanded workspace's dockview layout before collapsing
+    let dockviewLayout: unknown = null;
+    try {
+      if (expandedDockviewApiRef.current)
+        dockviewLayout = expandedDockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
+    }
+
+    set((s) => ({
+      workspaces: s.expandedWorkspaceId
+        ? s.workspaces.map((w) =>
+            w.id === s.expandedWorkspaceId ? { ...w, dockviewLayout } : w,
+          )
+        : s.workspaces,
+      expandedWorkspaceId: null,
+      gridDockviewLayout: null, // Force fresh rebuild of layer 1 grid
+      layoutVersion: s.layoutVersion + 1,
+    }));
+  },
+
+  /* ── Pane actions (scoped to expanded or active workspace) ── */
 
   setActivePaneId: (id) =>
     set((state) => updateActive(state, () => ({ activePaneId: id }))),
@@ -592,6 +607,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setPendingCwd: (paneId, path) => set({ pendingCwd: { paneId, path } }),
   clearPendingCwd: () => set({ pendingCwd: null }),
   setShowCommandPalette: (show) => set({ showCommandPalette: show }),
+  setShowTabStrip: (show) => set({ showTabStrip: show }),
 
   /* ── Layout persistence ── */
 
@@ -667,6 +683,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => ({
       workspaces: validWorkspaces,
       activeWorkspaceId: activeId,
+      gridDockviewLayout: saved.gridDockviewLayout ?? null,
       layoutVersion: state.layoutVersion + 1,
     }));
 
