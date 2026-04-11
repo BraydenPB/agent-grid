@@ -1,5 +1,6 @@
 import { Plus, FolderOpen } from 'lucide-react';
 import { useWorkspaceStore, getActiveProject } from '@/store/workspace-store';
+import { openFolderDialog } from '@/lib/tauri-shim';
 import { hasTerminalEntry } from '@/lib/terminal-registry';
 import { cn } from '@/lib/utils';
 import type { Project } from '@/types';
@@ -70,17 +71,20 @@ function ProjectCard({ project }: { project: Project }) {
 function AddProjectCard() {
   const addProject = useWorkspaceStore((s) => s.addProject);
 
-  const handleAdd = () => {
-    // TODO: PR 3 will add native folder picker via @tauri-apps/plugin-dialog
-    const name = window.prompt('Project name:', 'New Project');
-    if (name) {
-      addProject(name.trim() || 'New Project', '');
+  const handleAdd = async () => {
+    try {
+      const folderPath = await openFolderDialog();
+      if (!folderPath) return;
+      const name = folderPath.split(/[\\/]/).pop() || 'New Project';
+      addProject(name, folderPath);
+    } catch {
+      // Dialog unavailable (e.g. capability missing) — silently ignore
     }
   };
 
   return (
     <button
-      onClick={handleAdd}
+      onClick={() => void handleAdd()}
       className={cn(
         'group flex flex-col items-center justify-center gap-3 rounded-xl p-5',
         'border border-dashed border-white/[0.08]',

@@ -22,6 +22,17 @@ export async function getHomeDir(): Promise<string> {
   return homeDir();
 }
 
+/** Open a native folder picker, or fall back to prompt in browser preview. */
+export async function openFolderDialog(): Promise<string | null> {
+  if (!isTauri) {
+    return window.prompt('Enter project folder path:');
+  }
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({ directory: true, multiple: false });
+  if (!selected) return null;
+  return typeof selected === 'string' ? selected : (selected[0] ?? null);
+}
+
 let cachedPlatform: string | null = null;
 
 export function getPlatform(): string {
