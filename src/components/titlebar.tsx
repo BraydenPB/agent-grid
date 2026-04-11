@@ -46,6 +46,7 @@ export function Titlebar() {
   );
   const clearAllPanes = useWorkspaceStore((s) => s.clearAllPanes);
   const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
+  const currentLevel = useWorkspaceStore((s) => s.currentLevel);
   const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
 
   const activePaneId = activeWorkspace?.activePaneId ?? null;
@@ -59,7 +60,7 @@ export function Titlebar() {
   const layoutRef = useRef<HTMLDivElement>(null);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const hasPanes = panes.length > 0;
+  const hasPanes = panes.length > 0 && currentLevel >= 2;
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {

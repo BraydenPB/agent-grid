@@ -109,8 +109,11 @@ function collapseAndCaptureOutgoing(state: WorkspaceState): {
   };
 }
 
-/** Get the active project from state */
-function getActiveProject(state: WorkspaceState): Project | undefined {
+/**
+ * Get the active project from state.
+ * Use in component selectors: `useWorkspaceStore(getActiveProject)`
+ */
+export function getActiveProject(state: WorkspaceState): Project | undefined {
   return state.projects.find((p) => p.id === state.activeProjectId);
 }
 
@@ -311,7 +314,7 @@ export interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   projects: [],
   activeProjectId: null,
-  currentLevel: 2, // Start at Level 2 for PR 1 compat (Level 1 UI added in PR 2)
+  currentLevel: (loadLayout() ? 2 : 1) as 1 | 2 | 3, // Level 2 if saved layout exists, else Level 1
   workspaces: {},
   expandedPaneId: null,
   level2PaneIds: [],

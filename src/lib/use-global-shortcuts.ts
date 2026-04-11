@@ -54,6 +54,11 @@ export function useGlobalShortcuts() {
           store.setShowProjectBrowser(false);
           return;
         }
+        if (store.currentLevel >= 2) {
+          e.preventDefault();
+          store.goToLevel1();
+          return;
+        }
       }
 
       // Ctrl+Shift+P — Toggle command palette

@@ -123,6 +123,28 @@ describe('Escape', () => {
     fireKey('Escape');
     expect(useWorkspaceStore.getState().showProjectBrowser).toBe(false);
   });
+
+  it('navigates to Level 1 when at Level 2 with nothing else open', () => {
+    setupHook();
+    // Ensure we're at Level 2 with a project
+    useWorkspaceStore.getState().addPane(shellId);
+    expect(useWorkspaceStore.getState().currentLevel).toBe(2);
+
+    fireKey('Escape');
+    expect(useWorkspaceStore.getState().currentLevel).toBe(1);
+  });
+
+  it('does nothing at Level 1', () => {
+    setupHook();
+    // Go to Level 1
+    useWorkspaceStore.getState().addPane(shellId);
+    useWorkspaceStore.getState().goToLevel1();
+    expect(useWorkspaceStore.getState().currentLevel).toBe(1);
+
+    fireKey('Escape');
+    // Should remain at Level 1
+    expect(useWorkspaceStore.getState().currentLevel).toBe(1);
+  });
 });
 
 // ── Ctrl+Shift+P — Command palette ──
