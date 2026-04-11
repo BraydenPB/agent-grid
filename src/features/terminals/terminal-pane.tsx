@@ -241,7 +241,7 @@ export function TerminalPane({
         if (e.ctrlKey && e.key === 'Enter') return false;
         if (e.ctrlKey && e.altKey && e.key.startsWith('Arrow')) return false;
         if (e.ctrlKey && e.shiftKey && e.key === 'Delete') return false;
-        // Handle Escape directly — collapse levels
+        // Let Escape bubble to the global handler — don't send to PTY
         if (
           e.key === 'Escape' &&
           !e.ctrlKey &&
@@ -249,17 +249,7 @@ export function TerminalPane({
           !e.shiftKey &&
           e.type === 'keydown'
         ) {
-          const s = useWorkspaceStore.getState();
-          if (s.level3PaneId) {
-            e.preventDefault();
-            s.exitLevel3();
-            return false;
-          }
-          if (s.expandedPaneId) {
-            e.preventDefault();
-            s.collapsePane();
-            return false;
-          }
+          return false;
         }
         return true;
       });
