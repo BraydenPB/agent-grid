@@ -260,15 +260,6 @@ export function TerminalPane({
             s.collapsePane();
             return false;
           }
-          if (
-            !s.showCommandPalette &&
-            !s.showProjectBrowser &&
-            s.currentLevel >= 2
-          ) {
-            e.preventDefault();
-            s.goToLevel1();
-            return false;
-          }
         }
         return true;
       });

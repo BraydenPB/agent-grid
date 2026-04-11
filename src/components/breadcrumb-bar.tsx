@@ -29,7 +29,7 @@ export function BreadcrumbBar() {
           'text-zinc-600 transition-colors duration-100',
           'hover:bg-white/[0.06] hover:text-zinc-300',
         )}
-        title="Back to projects (Escape)"
+        title="Back to projects"
       >
         <ArrowLeft size={12} strokeWidth={2} />
       </button>
