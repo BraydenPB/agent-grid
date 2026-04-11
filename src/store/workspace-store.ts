@@ -12,6 +12,7 @@ import { generateId } from '@/lib/utils';
 import { getHomeDir, getPlatform } from '@/lib/tauri-shim';
 import {
   loadLayout,
+  saveLayout,
   clearSavedLayout,
   loadNamedLayouts,
   saveNamedLayout,
@@ -434,6 +435,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       currentLevel: 2,
       layoutVersion: s.layoutVersion + 1,
     }));
+
+    // Flush to localStorage — outgoing grid unmounts on project switch
+    const s = get();
+    saveLayout(s.projects, s.workspaces, s.activeProjectId);
   },
 
   goToLevel1: () => {
@@ -456,6 +461,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       currentLevel: 1 as const,
       layoutVersion: s.layoutVersion + 1,
     }));
+
+    // Flush to localStorage synchronously — the grid unmounts on level change
+    // and would cancel the debounced save in TerminalGrid
+    const s = get();
+    saveLayout(s.projects, s.workspaces, s.activeProjectId);
   },
 
   setMainPane: (paneId) => {
@@ -597,6 +607,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ...expansionReset,
       layoutVersion: s.layoutVersion + 1,
     }));
+
+    // Flush to localStorage — outgoing grid unmounts on workspace switch
+    const s = get();
+    saveLayout(s.projects, s.workspaces, s.activeProjectId);
   },
 
   renameWorkspaceTab: (id, name) =>
@@ -838,6 +852,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         };
       }
 
+      // Clear global expansion/level state if the removed pane is involved
+      let levelReset: Partial<WorkspaceState> = {};
+      if (state.expandedPaneId === id) {
+        // Closing the expanded pane — collapse back to full grid
+        levelReset = {
+          expandedPaneId: null,
+          level2PaneIds: [],
+          preExpandLayout: null,
+          level2Layout: null,
+          level3PaneId: null,
+          preLevel3Layout: null,
+        };
+      } else if (state.level3PaneId === id) {
+        // Closing the level-3 pane — drop back to level 2
+        levelReset = { level3PaneId: null };
+      }
+      // Remove pane from level2PaneIds if it was a level-2 ephemeral pane
+      if (state.level2PaneIds.includes(id)) {
+        levelReset.level2PaneIds = state.level2PaneIds.filter((p) => p !== id);
+      }
+
       return {
         ...updateActive(state, () => ({
           panes: remaining,
@@ -847,6 +882,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             ws.maximizedPaneId === id ? null : ws.maximizedPaneId,
         })),
         ...projectUpdate,
+        ...levelReset,
       };
     }),
 
@@ -1301,6 +1337,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const project = getActiveProject(state);
 
     // Named layouts store WorkspaceTab[] — convert to ProjectWorkspace
+    // Generate fresh IDs so importing a layout never collides with live state
     const projectId = project?.id ?? generateId();
 
     const convertedWorkspaces: Record<string, ProjectWorkspace> = {};
@@ -1313,16 +1350,50 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       if (validPanes.length === 0) continue;
 
+      // Build old→new pane ID map
+      const paneIdMap = new Map<string, string>();
+      for (const p of validPanes) {
+        paneIdMap.set(p.id, generateId());
+      }
+
+      // Rekey pane IDs and remap internal references
+      const rekeyedPanes: Pane[] = validPanes.map((p) => ({
+        ...p,
+        id: paneIdMap.get(p.id)!,
+        dockviewPosition: p.dockviewPosition
+          ? {
+              ...p.dockviewPosition,
+              referenceId: p.dockviewPosition.referenceId
+                ? (paneIdMap.get(p.dockviewPosition.referenceId) ??
+                  p.dockviewPosition.referenceId)
+                : undefined,
+            }
+          : undefined,
+        splitFrom: p.splitFrom
+          ? {
+              ...p.splitFrom,
+              paneId: paneIdMap.get(p.splitFrom.paneId) ?? p.splitFrom.paneId,
+            }
+          : undefined,
+      }));
+
+      const newWsId = generateId();
       const pw: ProjectWorkspace = {
-        id: wsTab.id,
+        id: newWsId,
         projectId,
         name: wsTab.name,
         worktreePath: wsTab.cwd,
-        panes: validPanes,
-        activePaneId: wsTab.activePaneId,
-        maximizedPaneId: wsTab.maximizedPaneId,
+        panes: rekeyedPanes,
+        activePaneId: wsTab.activePaneId
+          ? (paneIdMap.get(wsTab.activePaneId) ?? rekeyedPanes[0]?.id ?? null)
+          : (rekeyedPanes[0]?.id ?? null),
+        maximizedPaneId: wsTab.maximizedPaneId
+          ? (paneIdMap.get(wsTab.maximizedPaneId) ?? null)
+          : null,
         activePreset: wsTab.activePreset,
-        dockviewLayout: wsTab.dockviewLayout,
+        // Null out dockviewLayout — embedded panel IDs no longer match
+        // The grid will rebuild positioning from the pane list
+        dockviewLayout: null,
         color: wsTab.color,
         createdAt: wsTab.createdAt,
         updatedAt: wsTab.updatedAt,
