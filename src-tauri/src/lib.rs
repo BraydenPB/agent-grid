@@ -156,18 +156,53 @@ pub struct WorktreeInfo {
 
 #[tauri::command]
 fn list_worktrees(cwd: String) -> Result<Vec<WorktreeInfo>, String> {
-    let output = std::process::Command::new("git")
+    // Canonicalize cwd to resolve ".." traversals (consistent with list_projects)
+    let cwd_path = Path::new(&cwd)
+        .canonicalize()
+        .map_err(|e| format!("Invalid path '{}': {}", cwd, e))?;
+
+    let mut child = std::process::Command::new("git")
         .args(["worktree", "list", "--porcelain"])
-        .current_dir(&cwd)
-        .output()
+        .current_dir(&cwd_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Failed to run git: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git worktree list failed: {}", stderr));
+    // 5-second deadline to avoid hanging on pathological repos
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    let stderr = child.stderr.take().map(|mut e| {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        let _ = e.read_to_string(&mut buf);
+                        buf
+                    }).unwrap_or_default();
+                    return Err(format!("git worktree list failed: {}", stderr));
+                }
+                break;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("git worktree list timed out".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("git worktree list failed: {}", e)),
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = child.stdout.take().map(|mut o| {
+        use std::io::Read;
+        let mut buf = String::new();
+        let _ = o.read_to_string(&mut buf);
+        buf
+    }).unwrap_or_default();
     let mut worktrees = Vec::new();
     let mut current_path = String::new();
     let mut current_branch = String::new();
@@ -211,55 +246,74 @@ fn list_worktrees(cwd: String) -> Result<Vec<WorktreeInfo>, String> {
     Ok(worktrees)
 }
 
+/// Canonicalize a worktree result path and strip the \\?\ prefix
+fn canonicalize_worktree_result(cwd: &Path, path: &str) -> String {
+    let wt_path = Path::new(path);
+    let abs_path = if wt_path.is_absolute() {
+        wt_path.to_path_buf()
+    } else {
+        cwd.join(wt_path)
+    };
+    let result = abs_path
+        .canonicalize()
+        .unwrap_or(abs_path)
+        .to_string_lossy()
+        .to_string();
+    result
+        .strip_prefix("\\\\?\\")
+        .unwrap_or(&result)
+        .to_string()
+}
+
 #[tauri::command]
 fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, String> {
+    // Canonicalize cwd and validate the target path stays within it
+    let cwd_path = Path::new(&cwd)
+        .canonicalize()
+        .map_err(|e| format!("Invalid cwd '{}': {}", cwd, e))?;
+
+    // Resolve the target path relative to cwd
+    let target = if Path::new(&path).is_absolute() {
+        Path::new(&path).to_path_buf()
+    } else {
+        cwd_path.join(&path)
+    };
+
+    // Containment check: target must be under cwd (prevent path traversal)
+    // Use lexical check on the joined path — canonicalize isn't possible yet
+    // since the directory doesn't exist. Normalize ".." components instead.
+    let mut normalized = Vec::new();
+    for component in target.components() {
+        match component {
+            std::path::Component::ParentDir => { normalized.pop(); }
+            std::path::Component::CurDir => {}
+            c => normalized.push(c),
+        }
+    }
+    let normalized_path: std::path::PathBuf = normalized.iter().collect();
+    if !normalized_path.starts_with(&cwd_path) {
+        return Err("Worktree path must be within the project directory".to_string());
+    }
+
     let output = std::process::Command::new("git")
         .args(["worktree", "add", &path, "-b", &branch])
-        .current_dir(&cwd)
+        .current_dir(&cwd_path)
         .output()
         .map_err(|e| format!("Failed to run git: {}", e))?;
 
     if output.status.success() {
-        let wt_path = Path::new(&path);
-        let abs_path = if wt_path.is_absolute() {
-            wt_path.to_path_buf()
-        } else {
-            Path::new(&cwd).join(wt_path)
-        };
-        let result = abs_path
-            .canonicalize()
-            .unwrap_or(abs_path)
-            .to_string_lossy()
-            .to_string();
-        return Ok(result
-            .strip_prefix("\\\\?\\")
-            .unwrap_or(&result)
-            .to_string());
+        return Ok(canonicalize_worktree_result(&cwd_path, &path));
     }
 
     // Branch exists — try without -b
     let output2 = std::process::Command::new("git")
         .args(["worktree", "add", &path, &branch])
-        .current_dir(&cwd)
+        .current_dir(&cwd_path)
         .output()
         .map_err(|e| format!("Failed to run git: {}", e))?;
 
     if output2.status.success() {
-        let wt_path = Path::new(&path);
-        let abs_path = if wt_path.is_absolute() {
-            wt_path.to_path_buf()
-        } else {
-            Path::new(&cwd).join(wt_path)
-        };
-        let result = abs_path
-            .canonicalize()
-            .unwrap_or(abs_path)
-            .to_string_lossy()
-            .to_string();
-        return Ok(result
-            .strip_prefix("\\\\?\\")
-            .unwrap_or(&result)
-            .to_string());
+        return Ok(canonicalize_worktree_result(&cwd_path, &path));
     }
 
     let stderr = String::from_utf8_lossy(&output2.stderr);
@@ -272,6 +326,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_projects,
             list_worktrees,

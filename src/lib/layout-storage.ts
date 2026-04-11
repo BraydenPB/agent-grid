@@ -139,20 +139,59 @@ export function saveLayout(
   }
 }
 
+/** Validate internal shape of V3 data to catch corruption */
+function isValidV3(data: unknown): data is SavedLayoutV3 {
+  if (typeof data !== 'object' || data === null) return false;
+  const d = data as Record<string, unknown>;
+  if (d.version !== 3) return false;
+  if (!Array.isArray(d.projects)) return false;
+  if (
+    typeof d.workspaces !== 'object' ||
+    d.workspaces === null ||
+    Array.isArray(d.workspaces)
+  )
+    return false;
+
+  // Validate each project has required string fields
+  for (const p of d.projects as unknown[]) {
+    if (typeof p !== 'object' || p === null) return false;
+    const proj = p as Record<string, unknown>;
+    if (typeof proj.id !== 'string' || typeof proj.name !== 'string')
+      return false;
+    if (!Array.isArray(proj.workspaceIds)) return false;
+  }
+
+  // Validate each workspace has panes array
+  for (const ws of Object.values(d.workspaces as Record<string, unknown>)) {
+    if (typeof ws !== 'object' || ws === null) return false;
+    const w = ws as Record<string, unknown>;
+    if (typeof w.id !== 'string') return false;
+    if (!Array.isArray(w.panes)) return false;
+    for (const pane of w.panes as unknown[]) {
+      if (typeof pane !== 'object' || pane === null) return false;
+      const pa = pane as Record<string, unknown>;
+      if (typeof pa.id !== 'string' || typeof pa.profileId !== 'string')
+        return false;
+    }
+  }
+
+  return true;
+}
+
 export function loadLayout(): SavedLayoutV3 | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
 
-    // V3 format
+    // V3 format — validate internal shape
     if (
       data.version === 3 &&
       Array.isArray(data.projects) &&
       typeof data.workspaces === 'object' &&
       !Array.isArray(data.workspaces)
     ) {
-      return data as SavedLayoutV3;
+      return isValidV3(data) ? data : null;
     }
 
     // V2 format — migrate

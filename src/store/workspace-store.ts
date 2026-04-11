@@ -23,6 +23,10 @@ import {
 } from '@/lib/layout-storage';
 import { dockviewApiRef } from '@/lib/dockview-api';
 import { destroyTerminalEntry } from '@/lib/terminal-registry';
+import { usePaneStatusStore } from '@/store/pane-status-store';
+
+/** Cached startup layout — parsed once, consumed by both currentLevel init and restoreLayout */
+let cachedStartupLayout = loadLayout();
 
 /* ── Helpers ── */
 
@@ -323,7 +327,7 @@ export interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   projects: [],
   activeProjectId: null,
-  currentLevel: (loadLayout() ? 2 : 1) as 1 | 2 | 3, // Level 2 if saved layout exists, else Level 1
+  currentLevel: (cachedStartupLayout ? 2 : 1) as 1 | 2 | 3, // Level 2 if saved layout exists, else Level 1
   workspaces: {},
   expandedPaneId: null,
   level2PaneIds: [],
@@ -926,15 +930,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           activePreset: presetName,
           dockviewLayout: null,
         })),
+        expandedPaneId: null,
+        level2PaneIds: [],
+        level2Layout: null,
+        level3PaneId: null,
+        preExpandLayout: null,
+        preLevel3Layout: null,
         layoutVersion: state.layoutVersion + 1,
         showProjectBrowser: false,
       };
     }),
 
-  clearAllPanes: () =>
+  clearAllPanes: () => {
+    const ws = getActive(get());
+    if (ws) {
+      for (const pane of ws.panes) {
+        destroyTerminalEntry(pane.id);
+      }
+      usePaneStatusStore.getState().clearAll();
+    }
     set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
+      if (!getActive(state)) return state;
       return {
         ...updateActive(state, () => ({
           panes: [],
@@ -945,7 +961,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         })),
         layoutVersion: state.layoutVersion + 1,
       };
-    }),
+    });
+  },
 
   updatePaneProfile: (paneId, profileId) =>
     set((state) => {
@@ -1183,7 +1200,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   restoreLayout: () => {
-    const saved = loadLayout();
+    const saved = cachedStartupLayout ?? loadLayout();
+    cachedStartupLayout = null; // Release cached reference after first use
     if (!saved) return false;
 
     const profiles = get().profiles;

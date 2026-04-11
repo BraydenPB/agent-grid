@@ -135,7 +135,20 @@ export function TerminalPane({
 
       try {
         const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => webglAddon.dispose());
+        webglAddon.onContextLoss(() => {
+          webglAddon.dispose();
+          // xterm falls back to its built-in canvas renderer after dispose.
+          // Try to re-create WebGL after a short delay.
+          setTimeout(() => {
+            try {
+              const replacement = new WebglAddon();
+              replacement.onContextLoss(() => replacement.dispose());
+              term.loadAddon(replacement);
+            } catch {
+              /* stay on canvas renderer */
+            }
+          }, 1000);
+        });
         term.loadAddon(webglAddon);
       } catch {
         /* Canvas renderer fallback */
@@ -196,13 +209,16 @@ export function TerminalPane({
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
           const sel = term.getSelection();
-          if (sel) void navigator.clipboard.writeText(sel);
+          if (sel) void navigator.clipboard.writeText(sel).catch(() => {});
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
-          void navigator.clipboard.readText().then((text) => {
-            entryRef.current?.pty?.write(text);
-          });
+          void navigator.clipboard
+            .readText()
+            .then((text) => {
+              entryRef.current?.pty?.write(text);
+            })
+            .catch(() => {});
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'D' && e.type === 'keydown') {
@@ -229,6 +245,10 @@ export function TerminalPane({
           resetFontSize();
           return false;
         }
+        // Let devtools shortcuts through to native WebView handler
+        if (e.key === 'F12') return false;
+        if (e.ctrlKey && e.shiftKey && e.key === 'I' && e.type === 'keydown')
+          return false;
         // Let global shortcuts through to window handler
         if (e.ctrlKey && e.shiftKey && e.key === 'P') return false;
         if (e.ctrlKey && !e.shiftKey && e.key === 't') return false;
@@ -241,7 +261,8 @@ export function TerminalPane({
         if (e.ctrlKey && e.key === 'Enter') return false;
         if (e.ctrlKey && e.altKey && e.key.startsWith('Arrow')) return false;
         if (e.ctrlKey && e.shiftKey && e.key === 'Delete') return false;
-        // Let Escape bubble to the global handler — don't send to PTY
+        // Let Escape bubble to the global handler (useGlobalShortcuts)
+        // — don't send to PTY; the global handler handles level/palette/maximize dismiss
         if (
           e.key === 'Escape' &&
           !e.ctrlKey &&
@@ -455,13 +476,16 @@ export function TerminalPane({
     const entry = entryRef.current;
     if (!entry) return;
     const sel = entry.terminal.getSelection();
-    if (sel) void navigator.clipboard.writeText(sel);
+    if (sel) void navigator.clipboard.writeText(sel).catch(() => {});
   }, []);
 
   const handlePaste = useCallback(() => {
-    void navigator.clipboard.readText().then((text) => {
-      entryRef.current?.pty?.write(text);
-    });
+    void navigator.clipboard
+      .readText()
+      .then((text) => {
+        entryRef.current?.pty?.write(text);
+      })
+      .catch(() => {});
   }, []);
 
   const handleClear = useCallback(() => {
@@ -538,8 +562,6 @@ export function TerminalPane({
     }
 
     // ── Create new terminal ──
-    const cancelled = { current: false };
-
     const xtermContainer = document.createElement('div');
     xtermContainer.style.width = '100%';
     xtermContainer.style.height = '100%';
@@ -619,14 +641,10 @@ export function TerminalPane({
     };
     requestAnimationFrame(tryFit);
 
-    // Spawn PTY
-    void (async () => {
-      if (cancelled.current) return;
-      await spawnProcess(entry, initialProfile, initialCwd || undefined);
-    })();
+    // Spawn PTY (spawnSeq guards against stale spawns)
+    void spawnProcess(entry, initialProfile, initialCwd || undefined);
 
     return () => {
-      cancelled.current = true;
       disposed = true;
       resizeObserver.disconnect();
       // Detach xterm element but keep in registry for potential reattach

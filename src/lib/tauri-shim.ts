@@ -35,20 +35,21 @@ export async function openFolderDialog(): Promise<string | null> {
 
 let cachedPlatform: string | null = null;
 
+// Eagerly resolve platform from Tauri plugin via async import (ESM-safe).
+// Until the import resolves, getPlatform() falls back to navigator.platform.
+if (isTauri) {
+  void import('@tauri-apps/plugin-os')
+    .then((mod) => {
+      cachedPlatform = mod.platform();
+    })
+    .catch(() => {});
+}
+
 export function getPlatform(): string {
   if (cachedPlatform) return cachedPlatform;
-  if (!isTauri) {
-    cachedPlatform = navigator.platform.startsWith('Win') ? 'windows' : 'linux';
-    return cachedPlatform;
-  }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { platform } = require('@tauri-apps/plugin-os');
-    cachedPlatform = platform();
-  } catch {
-    cachedPlatform = navigator.platform.startsWith('Win') ? 'windows' : 'linux';
-  }
-  return cachedPlatform!;
+  // Don't cache the navigator fallback — let the async import set the
+  // authoritative value when it resolves (avoids caching 'linux' on macOS).
+  return navigator.platform.startsWith('Win') ? 'windows' : 'linux';
 }
 
 export interface ShimPty {

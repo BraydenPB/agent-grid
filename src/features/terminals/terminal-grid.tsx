@@ -21,8 +21,18 @@ import {
 import { usePaneStatusStore } from '@/store/pane-status-store';
 import { saveLayout } from '@/lib/layout-storage';
 import { dockviewApiRef } from '@/lib/dockview-api';
-import type { TerminalProfile } from '@/types';
+import type { Pane, TerminalProfile } from '@/types';
 import { TerminalPane } from './terminal-pane';
+
+const EMPTY_PANES: Pane[] = [];
+
+const FALLBACK_PROFILE: TerminalProfile = {
+  id: 'system-shell',
+  name: 'Shell',
+  command: '__SYSTEM_SHELL__',
+  args: [],
+  color: '#6b7280',
+};
 
 /** Thin wrapper that subscribes to the store for isActive */
 function TerminalPaneWrapper({
@@ -68,18 +78,21 @@ export function TerminalGrid() {
   const level2PaneIds = useWorkspaceStore((s) => s.level2PaneIds);
   const level3PaneId = useWorkspaceStore((s) => s.level3PaneId);
 
-  const allPanes = activeWorkspace?.panes ?? [];
+  const allPanes = activeWorkspace?.panes ?? EMPTY_PANES;
   // Level 3: show only the single maximized pane
   // Level 2: show the expanded pane + level 2 panes
   // Level 1: show all panes
-  const panes =
-    level3PaneId !== null
-      ? allPanes.filter((p) => p.id === level3PaneId)
-      : expandedPaneId !== null
-        ? allPanes.filter(
-            (p) => p.id === expandedPaneId || level2PaneIds.includes(p.id),
-          )
-        : allPanes;
+  const panes = useMemo(() => {
+    if (level3PaneId !== null) {
+      return allPanes.filter((p) => p.id === level3PaneId);
+    }
+    if (expandedPaneId !== null) {
+      return allPanes.filter(
+        (p) => p.id === expandedPaneId || level2PaneIds.includes(p.id),
+      );
+    }
+    return allPanes;
+  }, [allPanes, level3PaneId, expandedPaneId, level2PaneIds]);
   const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
 
   const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
@@ -111,7 +124,9 @@ export function TerminalGrid() {
       const addedIds = new Set<string>();
       panes.forEach((pane, index) => {
         const profile =
-          profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+          profiles.find((p) => p.id === pane.profileId) ??
+          profiles[0] ??
+          FALLBACK_PROFILE;
 
         const addPanelConfig: any = {
           id: pane.id,
@@ -270,7 +285,9 @@ export function TerminalGrid() {
       const reAddedIds = new Set<string>();
       panes.forEach((pane, index) => {
         const profile =
-          profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+          profiles.find((p) => p.id === pane.profileId) ??
+          profiles[0] ??
+          FALLBACK_PROFILE;
 
         const addPanelConfig: any = {
           id: pane.id,
@@ -352,7 +369,9 @@ export function TerminalGrid() {
       if (!pane) return;
 
       const profile =
-        profiles.find((p) => p.id === pane.profileId) ?? profiles[0]!;
+        profiles.find((p) => p.id === pane.profileId) ??
+        profiles[0] ??
+        FALLBACK_PROFILE;
 
       const addPanelConfig: any = {
         id: pane.id,

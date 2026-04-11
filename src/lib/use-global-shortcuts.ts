@@ -32,7 +32,8 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Escape — close command palette, exit maximize, or close project browser
+      // Escape — close command palette, exit maximize, or close project browser.
+      // Arrives here because TerminalPane's attachCustomKeyEventHandler returns false for Escape.
       if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         if (store.showCommandPalette) {
           e.preventDefault();
