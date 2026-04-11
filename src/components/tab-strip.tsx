@@ -1,16 +1,22 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { Plus, X } from 'lucide-react';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import {
+  useWorkspaceStore,
+  getProjectWorkspaceList,
+  getActiveWorkspaceId,
+} from '@/store/workspace-store';
 import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
 import { cn } from '@/lib/utils';
-import type { WorkspaceTab } from '@/types';
+import type { ProjectWorkspace } from '@/types';
 
-function WorkspaceTabItem({ ws }: { ws: WorkspaceTab }) {
-  const isActive = useWorkspaceStore((s) => s.activeWorkspaceId === ws.id);
+function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
+  const isActive = useWorkspaceStore((s) => getActiveWorkspaceId(s) === ws.id);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const removeWorkspace = useWorkspaceStore((s) => s.removeWorkspace);
   const renameWorkspaceTab = useWorkspaceStore((s) => s.renameWorkspaceTab);
-  const workspaceCount = useWorkspaceStore((s) => s.workspaces.length);
+  const workspaceCount = useWorkspaceStore(
+    (s) => getProjectWorkspaceList(s).length,
+  );
 
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(ws.name);
@@ -38,7 +44,7 @@ function WorkspaceTabItem({ ws }: { ws: WorkspaceTab }) {
   const showStatus = worstStatus !== 'working' && statusColor !== 'transparent';
 
   const accentColor = ws.color || '#3b82f6';
-  const cwdLabel = ws.cwd?.split(/[\\/]/).pop() || '';
+  const cwdLabel = ws.worktreePath?.split(/[\\/]/).pop() || '';
 
   useEffect(() => {
     if (isActive && tabRef.current) {
@@ -96,7 +102,7 @@ function WorkspaceTabItem({ ws }: { ws: WorkspaceTab }) {
           ? 'bg-white/[0.06] text-zinc-200'
           : 'bg-transparent text-zinc-500 hover:bg-white/[0.03] hover:text-zinc-400',
       )}
-      title={`${ws.name}${cwdLabel ? ` — ${ws.cwd}` : ''} (${ws.panes.length} pane${ws.panes.length !== 1 ? 's' : ''})`}
+      title={`${ws.name}${cwdLabel ? ` — ${ws.worktreePath}` : ''} (${ws.panes.length} pane${ws.panes.length !== 1 ? 's' : ''})`}
     >
       {/* Active indicator — colored top border */}
       {isActive && (
@@ -190,7 +196,7 @@ function WorkspaceTabItem({ ws }: { ws: WorkspaceTab }) {
 }
 
 export function TabStrip() {
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const workspaces = useWorkspaceStore(getProjectWorkspaceList);
   const addWorkspace = useWorkspaceStore((s) => s.addWorkspace);
 
   if (workspaces.length === 0) return null;

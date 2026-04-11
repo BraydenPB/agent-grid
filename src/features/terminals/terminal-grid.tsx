@@ -7,7 +7,12 @@ import {
 } from 'dockview';
 import { AnimatePresence } from 'framer-motion';
 import 'dockview/dist/styles/dockview.css';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import {
+  useWorkspaceStore,
+  getActiveWorkspace,
+  getAllPaneIds,
+  getActiveWorkspaceId,
+} from '@/store/workspace-store';
 import { ProjectBrowser } from '@/features/projects/project-browser';
 import {
   cleanupOrphanedEntries,
@@ -32,7 +37,7 @@ function TerminalPaneWrapper({
   onClose: () => void;
 }) {
   const isActive = useWorkspaceStore((s) => {
-    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+    const ws = getActiveWorkspace(s);
     return ws?.activePaneId === paneId;
   });
   const setActivePaneId = useWorkspaceStore((s) => s.setActivePaneId);
@@ -50,9 +55,7 @@ function TerminalPaneWrapper({
 }
 
 export function TerminalGrid() {
-  const activeWorkspace = useWorkspaceStore((s) =>
-    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
-  );
+  const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
   const profiles = useWorkspaceStore((s) => s.profiles);
   const layoutVersion = useWorkspaceStore((s) => s.layoutVersion);
   const showProjectBrowser = useWorkspaceStore((s) => s.showProjectBrowser);
@@ -95,9 +98,7 @@ export function TerminalGrid() {
 
       // Restore saved Dockview layout if available
       const savedLayout = useWorkspaceStore.getState();
-      const activeWs = savedLayout.workspaces.find(
-        (w) => w.id === savedLayout.activeWorkspaceId,
-      );
+      const activeWs = getActiveWorkspace(savedLayout);
       if (activeWs?.dockviewLayout) {
         try {
           event.api.fromJSON(activeWs.dockviewLayout as any);
@@ -162,13 +163,21 @@ export function TerminalGrid() {
     const disposable = localDockviewApi.onDidLayoutChange(() => {
       if (programmaticChangeRef.current) return;
       const state = useWorkspaceStore.getState();
-      const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+      const ws = getActiveWorkspace(state);
       if (ws?.activePreset) {
-        useWorkspaceStore.setState((s) => ({
-          workspaces: s.workspaces.map((w) =>
-            w.id === s.activeWorkspaceId ? { ...w, activePreset: null } : w,
-          ),
-        }));
+        const activeWsId = getActiveWorkspaceId(state);
+        if (activeWsId) {
+          useWorkspaceStore.setState((s) => ({
+            workspaces: {
+              ...s.workspaces,
+              [activeWsId]: {
+                ...s.workspaces[activeWsId]!,
+                activePreset: null,
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          }));
+        }
       }
     });
 
@@ -238,9 +247,7 @@ export function TerminalGrid() {
       }
 
       // Restore saved Dockview layout if available (workspace switch)
-      const incomingWs = storeState.workspaces.find(
-        (w) => w.id === storeState.activeWorkspaceId,
-      );
+      const incomingWs = getActiveWorkspace(storeState);
       if (incomingWs?.dockviewLayout && !storeState.expandedPaneId) {
         try {
           api.fromJSON(incomingWs.dockviewLayout as any);
@@ -429,10 +436,8 @@ export function TerminalGrid() {
 
   // Clean up orphaned registry entries — consider ALL workspaces' panes as alive
   useEffect(() => {
-    const allPaneIds = useWorkspaceStore
-      .getState()
-      .workspaces.flatMap((w) => w.panes.map((p) => p.id));
-    cleanupOrphanedEntries(allPaneIds);
+    const allIds = getAllPaneIds(useWorkspaceStore.getState());
+    cleanupOrphanedEntries(allIds);
   }, [panes]);
 
   // Debounced layout save to localStorage
@@ -442,21 +447,26 @@ export function TerminalGrid() {
       const api = localDockviewApi;
 
       // Update active workspace's Dockview layout before saving.
-      // Skip when in level 2/3 — the live grid only shows a subset of panes,
+      // Skip when expanded — the live grid only shows a subset of panes,
       // and persisting that would overwrite the canonical full layout.
       let workspaces = state.workspaces;
-      if (api && state.activeWorkspaceId && !state.expandedPaneId) {
+      const activeWsId = getActiveWorkspaceId(state);
+      if (api && activeWsId && !state.expandedPaneId) {
         try {
           const dockviewLayout = api.toJSON();
-          workspaces = workspaces.map((w) =>
-            w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
-          );
+          const ws = workspaces[activeWsId];
+          if (ws) {
+            workspaces = {
+              ...workspaces,
+              [activeWsId]: { ...ws, dockviewLayout },
+            };
+          }
         } catch {
           /* ignore */
         }
       }
 
-      saveLayout(workspaces, state.activeWorkspaceId);
+      saveLayout(state.projects, workspaces, state.activeProjectId);
     }, 500);
     return () => clearTimeout(timer);
   }, [localDockviewApi, panes, maximizedPaneId]);

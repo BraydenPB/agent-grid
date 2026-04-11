@@ -1,9 +1,7 @@
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
 
 export function AppBar() {
-  const activeWorkspace = useWorkspaceStore((s) =>
-    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
-  );
+  const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
   const name = activeWorkspace?.name ?? 'Agent Grid';
   const paneCount = activeWorkspace?.panes.length ?? 0;
 

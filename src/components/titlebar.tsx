@@ -15,7 +15,7 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
 import { getAppWindow } from '@/lib/tauri-shim';
 import { cn } from '@/lib/utils';
 import type { Pane, TerminalProfile } from '@/types';
@@ -46,9 +46,7 @@ export function Titlebar() {
   );
   const clearAllPanes = useWorkspaceStore((s) => s.clearAllPanes);
   const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
-  const activeWorkspace = useWorkspaceStore((s) =>
-    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
-  );
+  const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
 
   const activePaneId = activeWorkspace?.activePaneId ?? null;
   const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;

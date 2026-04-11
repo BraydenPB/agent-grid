@@ -23,7 +23,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
 import type { TerminalProfile } from '@/types';
 
 const VIEWPORT_PAD = 8;
@@ -101,7 +101,7 @@ export function TerminalContextMenu({
   const profiles = useWorkspaceStore((s) => s.profiles);
   const updatePaneColor = useWorkspaceStore((s) => s.updatePaneColor);
   const paneColorOverride = useWorkspaceStore((s) => {
-    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+    const ws = getActiveWorkspace(s);
     return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
   });
   const currentProfile =

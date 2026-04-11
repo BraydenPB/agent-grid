@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Command } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 
 /* ── Action registry ── */
@@ -63,7 +63,7 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+        const ws = getActiveWorkspace(s);
         if (ws?.activePaneId) s.removePane(ws.activePaneId);
       },
     },
@@ -74,15 +74,10 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
+        const ws = getActiveWorkspace(s);
         const profileId =
-          s.workspaces
-            .find((w) => w.id === s.activeWorkspaceId)
-            ?.panes.find(
-              (p) =>
-                p.id ===
-                s.workspaces.find((w) => w.id === s.activeWorkspaceId)
-                  ?.activePaneId,
-            )?.profileId ?? 'system-shell';
+          ws?.panes.find((p) => p.id === ws?.activePaneId)?.profileId ??
+          'system-shell';
         s.addPane(profileId, 'right');
       },
     },
@@ -93,15 +88,10 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
+        const ws = getActiveWorkspace(s);
         const profileId =
-          s.workspaces
-            .find((w) => w.id === s.activeWorkspaceId)
-            ?.panes.find(
-              (p) =>
-                p.id ===
-                s.workspaces.find((w) => w.id === s.activeWorkspaceId)
-                  ?.activePaneId,
-            )?.profileId ?? 'system-shell';
+          ws?.panes.find((p) => p.id === ws?.activePaneId)?.profileId ??
+          'system-shell';
         s.addPane(profileId, 'below');
       },
     },
@@ -112,7 +102,7 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+        const ws = getActiveWorkspace(s);
         if (ws?.activePaneId) s.toggleMaximize(ws.activePaneId);
       },
     },

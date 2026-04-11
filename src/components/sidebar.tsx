@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { PanelRight, PanelBottom, Bookmark, X } from 'lucide-react';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 import { cn } from '@/lib/utils';
 
@@ -9,9 +9,7 @@ export function Sidebar() {
   const addPane = useWorkspaceStore((s) => s.addPane);
   const applyPreset = useWorkspaceStore((s) => s.applyPreset);
   const clearAllPanes = useWorkspaceStore((s) => s.clearAllPanes);
-  const activeWorkspace = useWorkspaceStore((s) =>
-    s.workspaces.find((w) => w.id === s.activeWorkspaceId),
-  );
+  const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
   const activePreset = activeWorkspace?.activePreset ?? null;
   const customLayouts = useWorkspaceStore((s) => s.customLayouts);
   const saveCustomLayout = useWorkspaceStore((s) => s.saveCustomLayout);

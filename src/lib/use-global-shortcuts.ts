@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
 
 /**
  * Global keyboard shortcuts.
@@ -21,7 +21,7 @@ export function useGlobalShortcuts() {
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       const store = useWorkspaceStore.getState();
-      const ws = store.workspaces.find((w) => w.id === store.activeWorkspaceId);
+      const ws = getActiveWorkspace(store);
 
       // Ctrl+Shift+Delete — Reset layout (clear localStorage and reload)
       if (e.ctrlKey && e.shiftKey && e.key === 'Delete') {

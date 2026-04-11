@@ -1,12 +1,22 @@
 /**
- * Layout persistence — save/restore workspace tabs to localStorage.
+ * Layout persistence — save/restore projects + workspaces to localStorage.
  */
 
-import type { Pane, WorkspaceTab } from '@/types';
+import type { Pane, Project, ProjectWorkspace, WorkspaceTab } from '@/types';
 import { generateId } from '@/lib/utils';
 
 const STORAGE_KEY = 'agent-grid:layout';
 const NAMED_LAYOUTS_KEY = 'agent-grid:named-layouts';
+
+/* ── V3 format (projects + flat workspace map) ── */
+
+interface SavedLayoutV3 {
+  version: 3;
+  projects: Project[];
+  workspaces: Record<string, ProjectWorkspace>;
+  activeProjectId: string | null;
+  savedAt: string;
+}
 
 /* ── V2 format (workspace tabs) ── */
 
@@ -55,14 +65,71 @@ function migrateV1toV2(v1: SavedLayoutV1): SavedLayoutV2 {
   };
 }
 
-export function saveLayout(
-  workspaces: WorkspaceTab[],
-  activeWorkspaceId: string | null,
-): void {
-  const data: SavedLayoutV2 = {
-    version: 2,
+function migrateV2toV3(v2: SavedLayoutV2): SavedLayoutV3 {
+  const projectId = generateId();
+  const now = new Date().toISOString();
+
+  const workspaces: Record<string, ProjectWorkspace> = {};
+  const wsIds: string[] = [];
+
+  for (const wsTab of v2.workspaces) {
+    const pw: ProjectWorkspace = {
+      id: wsTab.id,
+      projectId,
+      name: wsTab.name,
+      worktreePath: wsTab.cwd,
+      panes: wsTab.panes,
+      activePaneId: wsTab.activePaneId,
+      maximizedPaneId: wsTab.maximizedPaneId,
+      activePreset: wsTab.activePreset,
+      dockviewLayout: wsTab.dockviewLayout,
+      color: wsTab.color,
+      createdAt: wsTab.createdAt,
+      updatedAt: wsTab.updatedAt,
+    };
+    workspaces[pw.id] = pw;
+    wsIds.push(pw.id);
+  }
+
+  const activeWsId =
+    v2.activeWorkspaceId && wsIds.includes(v2.activeWorkspaceId)
+      ? v2.activeWorkspaceId
+      : (wsIds[0] ?? '');
+
+  // Find a main pane — use the active pane of the active workspace
+  const activeWs = workspaces[activeWsId];
+  const mainPaneId = activeWs?.activePaneId ?? null;
+
+  const project: Project = {
+    id: projectId,
+    name: 'Default',
+    path: '',
+    mainPaneId,
+    workspaceIds: wsIds,
+    activeWorkspaceId: activeWsId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  return {
+    version: 3,
+    projects: [project],
     workspaces,
-    activeWorkspaceId,
+    activeProjectId: projectId,
+    savedAt: v2.savedAt ?? now,
+  };
+}
+
+export function saveLayout(
+  projects: Project[],
+  workspaces: Record<string, ProjectWorkspace>,
+  activeProjectId: string | null,
+): void {
+  const data: SavedLayoutV3 = {
+    version: 3,
+    projects,
+    workspaces,
+    activeProjectId,
     savedAt: new Date().toISOString(),
   };
   try {
@@ -72,20 +139,30 @@ export function saveLayout(
   }
 }
 
-export function loadLayout(): SavedLayoutV2 | null {
+export function loadLayout(): SavedLayoutV3 | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
 
-    // V2 format
-    if (data.version === 2 && Array.isArray(data.workspaces)) {
-      return data as SavedLayoutV2;
+    // V3 format
+    if (
+      data.version === 3 &&
+      Array.isArray(data.projects) &&
+      typeof data.workspaces === 'object' &&
+      !Array.isArray(data.workspaces)
+    ) {
+      return data as SavedLayoutV3;
     }
 
-    // V1 format — migrate
+    // V2 format — migrate
+    if (data.version === 2 && Array.isArray(data.workspaces)) {
+      return migrateV2toV3(data as SavedLayoutV2);
+    }
+
+    // V1 format — migrate V1 → V2 → V3
     if (Array.isArray(data.panes)) {
-      return migrateV1toV2(data as SavedLayoutV1);
+      return migrateV2toV3(migrateV1toV2(data as SavedLayoutV1));
     }
 
     return null;

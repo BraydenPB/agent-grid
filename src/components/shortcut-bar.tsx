@@ -1,4 +1,4 @@
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
 import { cn } from '@/lib/utils';
 
 interface ShortcutHint {
@@ -25,7 +25,7 @@ const EMPTY_SHORTCUTS: ShortcutHint[] = [
 
 export function ShortcutBar() {
   const hasPanes = useWorkspaceStore((s) => {
-    const ws = s.workspaces.find((w) => w.id === s.activeWorkspaceId);
+    const ws = getActiveWorkspace(s);
     return (ws?.panes.length ?? 0) > 0;
   });
   const hints = hasPanes ? PANE_SHORTCUTS : EMPTY_SHORTCUTS;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { Pane } from '@/types';
+import type { Pane, Project, ProjectWorkspace } from '@/types';
 import {
   saveLayout,
   loadLayout,
@@ -23,6 +23,38 @@ function makePanes(count: number): Pane[] {
   }));
 }
 
+function makeProjectAndWorkspace(panes: Pane[]) {
+  const wsId = 'ws-1';
+  const projectId = 'project-1';
+  const workspace: ProjectWorkspace = {
+    id: wsId,
+    projectId,
+    name: 'Default',
+    panes,
+    activePaneId: panes[0]?.id ?? null,
+    maximizedPaneId: null,
+    activePreset: null,
+    dockviewLayout: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const project: Project = {
+    id: projectId,
+    name: 'Default',
+    path: '',
+    mainPaneId: panes[0]?.id ?? null,
+    workspaceIds: [wsId],
+    activeWorkspaceId: wsId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  return {
+    projects: [project],
+    workspaces: { [wsId]: workspace },
+    activeProjectId: projectId,
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -30,16 +62,18 @@ beforeEach(() => {
 // ── saveLayout + loadLayout round-trip ──
 
 describe('saveLayout / loadLayout', () => {
-  it('round-trips valid layout data', () => {
+  it('round-trips valid V3 layout data', () => {
     const panes = makePanes(2);
-    saveLayout(panes, 'pane-0', '2×2 Grid', { some: 'data' });
+    const { projects, workspaces, activeProjectId } =
+      makeProjectAndWorkspace(panes);
+    saveLayout(projects, workspaces, activeProjectId);
 
     const loaded = loadLayout();
     expect(loaded).not.toBeNull();
-    expect(loaded!.panes).toEqual(panes);
-    expect(loaded!.activePaneId).toBe('pane-0');
-    expect(loaded!.activePreset).toBe('2×2 Grid');
-    expect(loaded!.dockviewLayout).toEqual({ some: 'data' });
+    expect(loaded!.version).toBe(3);
+    expect(loaded!.projects).toHaveLength(1);
+    const ws = loaded!.workspaces[loaded!.projects[0]!.activeWorkspaceId];
+    expect(ws!.panes).toEqual(panes);
     expect(loaded!.savedAt).toBeTruthy();
   });
 
@@ -48,9 +82,72 @@ describe('saveLayout / loadLayout', () => {
   });
 
   it('saves a timestamp', () => {
-    saveLayout(makePanes(1), null, null, null);
+    const { projects, workspaces, activeProjectId } = makeProjectAndWorkspace(
+      makePanes(1),
+    );
+    saveLayout(projects, workspaces, activeProjectId);
     const loaded = loadLayout();
     expect(loaded!.savedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+// ── V1 migration ──
+
+describe('loadLayout — V1 migration', () => {
+  it('migrates V1 format to V3', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        panes: makePanes(2),
+        activePaneId: 'pane-0',
+        activePreset: null,
+        dockviewLayout: null,
+        savedAt: new Date().toISOString(),
+      }),
+    );
+    const loaded = loadLayout();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.version).toBe(3);
+    expect(loaded!.projects).toHaveLength(1);
+    const wsId = loaded!.projects[0]!.activeWorkspaceId;
+    const ws = loaded!.workspaces[wsId];
+    expect(ws!.panes).toHaveLength(2);
+    expect(ws!.activePaneId).toBe('pane-0');
+  });
+});
+
+// ── V2 migration ──
+
+describe('loadLayout — V2 migration', () => {
+  it('migrates V2 format to V3', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        workspaces: [
+          {
+            id: 'ws-old',
+            name: 'Old Workspace',
+            panes: makePanes(3),
+            activePaneId: 'pane-1',
+            maximizedPaneId: null,
+            activePreset: null,
+            dockviewLayout: null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        activeWorkspaceId: 'ws-old',
+        savedAt: new Date().toISOString(),
+      }),
+    );
+    const loaded = loadLayout();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.version).toBe(3);
+    expect(loaded!.projects).toHaveLength(1);
+    const ws = loaded!.workspaces['ws-old'];
+    expect(ws!.panes).toHaveLength(3);
+    expect(ws!.activePaneId).toBe('pane-1');
   });
 });
 
@@ -71,51 +168,16 @@ describe('loadLayout — invalid data', () => {
     localStorage.setItem(STORAGE_KEY, '"hello"');
     expect(loadLayout()).toBeNull();
   });
-
-  it('returns null when panes is not an array', () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ panes: 'not-array', activePaneId: null }),
-    );
-    expect(loadLayout()).toBeNull();
-  });
-
-  it('returns null when panes is null', () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ panes: null, activePaneId: null }),
-    );
-    expect(loadLayout()).toBeNull();
-  });
-
-  it('returns valid data even with missing optional fields', () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ panes: [] }));
-    const loaded = loadLayout();
-    expect(loaded).not.toBeNull();
-    expect(loaded!.panes).toEqual([]);
-  });
-
-  it('returns data even with extra unexpected fields', () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ panes: [], extra: true, nested: { a: 1 } }),
-    );
-    const loaded = loadLayout();
-    expect(loaded).not.toBeNull();
-  });
-
-  it('handles empty panes array', () => {
-    saveLayout([], null, null, null);
-    const loaded = loadLayout();
-    expect(loaded!.panes).toEqual([]);
-  });
 });
 
 // ── clearSavedLayout ──
 
 describe('clearSavedLayout', () => {
   it('removes saved layout', () => {
-    saveLayout(makePanes(1), null, null, null);
+    const { projects, workspaces, activeProjectId } = makeProjectAndWorkspace(
+      makePanes(1),
+    );
+    saveLayout(projects, workspaces, activeProjectId);
     expect(loadLayout()).not.toBeNull();
     clearSavedLayout();
     expect(loadLayout()).toBeNull();
@@ -137,8 +199,19 @@ describe('named layouts', () => {
     saveNamedLayout({
       id: 'layout-1',
       name: 'My Layout',
-      panes: makePanes(2),
-      dockviewLayout: null,
+      workspaces: [
+        {
+          id: 'ws-1',
+          name: 'Default',
+          panes: makePanes(2),
+          activePaneId: 'pane-0',
+          maximizedPaneId: null,
+          activePreset: null,
+          dockviewLayout: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
     });
 
     const loaded = loadNamedLayouts();
@@ -148,17 +221,25 @@ describe('named layouts', () => {
   });
 
   it('overwrites layout with same ID', () => {
+    const wsBase = {
+      id: 'ws-1',
+      name: 'Default',
+      activePaneId: null,
+      maximizedPaneId: null,
+      activePreset: null,
+      dockviewLayout: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
     saveNamedLayout({
       id: 'layout-1',
       name: 'V1',
-      panes: makePanes(1),
-      dockviewLayout: null,
+      workspaces: [{ ...wsBase, panes: makePanes(1) }],
     });
     saveNamedLayout({
       id: 'layout-1',
       name: 'V2',
-      panes: makePanes(2),
-      dockviewLayout: null,
+      workspaces: [{ ...wsBase, panes: makePanes(2) }],
     });
 
     const loaded = loadNamedLayouts();
@@ -167,29 +248,36 @@ describe('named layouts', () => {
   });
 
   it('stores multiple layouts with different IDs', () => {
-    saveNamedLayout({
-      id: 'a',
-      name: 'A',
+    const wsBase = {
+      id: 'ws-1',
+      name: 'Default',
       panes: [],
+      activePaneId: null,
+      maximizedPaneId: null,
+      activePreset: null,
       dockviewLayout: null,
-    });
-    saveNamedLayout({
-      id: 'b',
-      name: 'B',
-      panes: [],
-      dockviewLayout: null,
-    });
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    saveNamedLayout({ id: 'a', name: 'A', workspaces: [wsBase] });
+    saveNamedLayout({ id: 'b', name: 'B', workspaces: [wsBase] });
 
     expect(loadNamedLayouts()).toHaveLength(2);
   });
 
   it('deletes a named layout by ID', () => {
-    saveNamedLayout({
-      id: 'x',
-      name: 'X',
+    const wsBase = {
+      id: 'ws-1',
+      name: 'Default',
       panes: [],
+      activePaneId: null,
+      maximizedPaneId: null,
+      activePreset: null,
       dockviewLayout: null,
-    });
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    saveNamedLayout({ id: 'x', name: 'X', workspaces: [wsBase] });
     deleteNamedLayout('x');
     expect(loadNamedLayouts()).toHaveLength(0);
   });

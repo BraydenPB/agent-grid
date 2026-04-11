@@ -43,6 +43,36 @@ export interface WorkspaceTab {
   updatedAt: string;
 }
 
+/* ── Level system types ── */
+
+export interface Project {
+  id: string;
+  name: string;
+  path: string;
+  mainPaneId: string | null;
+  workspaceIds: string[];
+  activeWorkspaceId: string;
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectWorkspace {
+  id: string;
+  projectId: string;
+  name: string;
+  worktreePath?: string;
+  worktreeBranch?: string;
+  panes: Pane[];
+  activePaneId: string | null;
+  maximizedPaneId: string | null;
+  activePreset: string | null;
+  dockviewLayout: unknown;
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Task {
   id: string;
   paneId: string;
