@@ -15,7 +15,7 @@ import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
  * Alt+1-9          — Focus pane by index
  * Ctrl+Enter       — Maximize/restore active pane
  * Ctrl+Shift+P     — Toggle command palette
- * Escape           — Exit maximized mode, close palette, close project browser
+ * Escape           — Exit maximized mode, close palette, close project browser (does not navigate levels)
  */
 export function useGlobalShortcuts() {
   useEffect(() => {
@@ -52,11 +52,6 @@ export function useGlobalShortcuts() {
         if (store.showProjectBrowser) {
           e.preventDefault();
           store.setShowProjectBrowser(false);
-          return;
-        }
-        if (store.currentLevel >= 2) {
-          e.preventDefault();
-          store.goToLevel1();
           return;
         }
       }

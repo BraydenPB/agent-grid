@@ -124,14 +124,15 @@ describe('Escape', () => {
     expect(useWorkspaceStore.getState().showProjectBrowser).toBe(false);
   });
 
-  it('navigates to Level 1 when at Level 2 with nothing else open', () => {
+  it('does not navigate to Level 1 when at Level 2 with nothing else open', () => {
     setupHook();
     // Ensure we're at Level 2 with a project
     useWorkspaceStore.getState().addPane(shellId);
     expect(useWorkspaceStore.getState().currentLevel).toBe(2);
 
     fireKey('Escape');
-    expect(useWorkspaceStore.getState().currentLevel).toBe(1);
+    // Escape should NOT drop back to Level 1 — use breadcrumb for that
+    expect(useWorkspaceStore.getState().currentLevel).toBe(2);
   });
 
   it('does nothing at Level 1', () => {
