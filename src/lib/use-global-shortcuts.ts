@@ -24,6 +24,15 @@ export function useGlobalShortcuts() {
       const isExpanded = store.expandedWorkspaceId !== null;
       const ws = store.workspaces.find((w) => w.id === store.activeWorkspaceId);
 
+      // Ctrl+Shift+Delete — Reset layout (clear localStorage and reload)
+      if (e.ctrlKey && e.shiftKey && e.key === 'Delete') {
+        e.preventDefault();
+        localStorage.removeItem('agent-grid:layout');
+        localStorage.removeItem('agent-grid:named-layouts');
+        window.location.reload();
+        return;
+      }
+
       // Escape — collapse from layer 2, close command palette, or close project browser
       if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         if (store.showCommandPalette) {
