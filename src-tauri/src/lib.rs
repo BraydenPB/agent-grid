@@ -107,7 +107,13 @@ fn list_projects(dir: String) -> Result<Vec<ProjectInfo>, String> {
         }
 
         let name = entry.file_name().to_string_lossy().to_string();
+        // Strip \\?\ extended-length prefix that canonicalize() adds on Windows.
+        // Many programs (PowerShell, conpty) don't handle it as a CWD.
         let full_path = path.to_string_lossy().to_string();
+        let full_path = full_path
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(&full_path)
+            .to_string();
         let git_branch = read_git_branch(&path);
         let git_dirty = if git_branch.is_some() {
             check_git_dirty(&path)

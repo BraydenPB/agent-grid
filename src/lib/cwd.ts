@@ -41,6 +41,10 @@ export function normalizeCwd(raw: string, platform: string): string | null {
 
   // ── 2. Windows-specific normalization ──
   if (platform === 'windows') {
+    // Strip Windows extended-length path prefix (\\?\) that Rust's
+    // canonicalize() adds. Many programs don't handle it as a CWD.
+    path = path.replace(/^\\\\\?\\/, '');
+
     // Reconstruct UNC path from file://server/share/… URLs.
     // new URL('file://server/share') sets host='server', pathname='/share',
     // losing the host. If the pathname doesn't start with a drive letter,
