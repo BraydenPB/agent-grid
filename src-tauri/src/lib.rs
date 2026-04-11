@@ -197,7 +197,6 @@ fn list_worktrees(cwd: String) -> Result<Vec<WorktreeInfo>, String> {
         }
     }
 
-    // Push the last entry
     if !current_path.is_empty() && !is_bare {
         worktrees.push(WorktreeInfo {
             path: current_path
@@ -214,7 +213,6 @@ fn list_worktrees(cwd: String) -> Result<Vec<WorktreeInfo>, String> {
 
 #[tauri::command]
 fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, String> {
-    // Try to create worktree with a new branch
     let output = std::process::Command::new("git")
         .args(["worktree", "add", &path, "-b", &branch])
         .current_dir(&cwd)
@@ -222,7 +220,6 @@ fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, 
         .map_err(|e| format!("Failed to run git: {}", e))?;
 
     if output.status.success() {
-        // Return the absolute path of the created worktree
         let wt_path = Path::new(&path);
         let abs_path = if wt_path.is_absolute() {
             wt_path.to_path_buf()
@@ -234,14 +231,13 @@ fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, 
             .unwrap_or(abs_path)
             .to_string_lossy()
             .to_string();
-        let result = result
+        return Ok(result
             .strip_prefix("\\\\?\\")
             .unwrap_or(&result)
-            .to_string();
-        return Ok(result);
+            .to_string());
     }
 
-    // If branch already exists, try without -b (checkout existing branch)
+    // Branch exists — try without -b
     let output2 = std::process::Command::new("git")
         .args(["worktree", "add", &path, &branch])
         .current_dir(&cwd)
@@ -260,11 +256,10 @@ fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, 
             .unwrap_or(abs_path)
             .to_string_lossy()
             .to_string();
-        let result = result
+        return Ok(result
             .strip_prefix("\\\\?\\")
             .unwrap_or(&result)
-            .to_string();
-        return Ok(result);
+            .to_string());
     }
 
     let stderr = String::from_utf8_lossy(&output2.stderr);

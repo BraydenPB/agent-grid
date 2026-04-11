@@ -14,8 +14,6 @@ interface SavedLayoutV2 {
   version: 2;
   workspaces: WorkspaceTab[];
   activeWorkspaceId: string | null;
-  /** Saved Dockview layout for the layer 1 project grid */
-  gridDockviewLayout?: unknown;
   savedAt: string;
 }
 
@@ -60,13 +58,11 @@ function migrateV1toV2(v1: SavedLayoutV1): SavedLayoutV2 {
 export function saveLayout(
   workspaces: WorkspaceTab[],
   activeWorkspaceId: string | null,
-  gridDockviewLayout?: unknown,
 ): void {
   const data: SavedLayoutV2 = {
     version: 2,
     workspaces,
     activeWorkspaceId,
-    gridDockviewLayout: gridDockviewLayout ?? undefined,
     savedAt: new Date().toISOString(),
   };
   try {

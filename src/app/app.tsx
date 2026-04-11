@@ -4,7 +4,6 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Titlebar } from '@/components/titlebar';
 import { TabStrip } from '@/components/tab-strip';
 import { TerminalGrid } from '@/features/terminals/terminal-grid';
-import { ExpandedView } from '@/features/terminals/expanded-view';
 import { CommandPalette } from '@/features/command-palette/command-palette';
 import { useGlobalShortcuts } from '@/lib/use-global-shortcuts';
 import { useWorkspaceStore } from '@/store/workspace-store';
@@ -16,8 +15,6 @@ export function App() {
   const setShowCommandPalette = useWorkspaceStore(
     (s) => s.setShowCommandPalette,
   );
-  const expandedWorkspaceId = useWorkspaceStore((s) => s.expandedWorkspaceId);
-  const showTabStrip = useWorkspaceStore((s) => s.showTabStrip);
 
   useEffect(() => {
     const store = useWorkspaceStore.getState();
@@ -25,15 +22,13 @@ export function App() {
     store.restoreLayout();
   }, []);
 
-  const isExpanded = expandedWorkspaceId !== null;
-
   return (
     <ErrorBoundary>
       <div className="mesh-bg flex h-screen w-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100">
         <Titlebar />
-        {showTabStrip && !isExpanded && <TabStrip />}
+        <TabStrip />
         <main className="relative flex min-h-0 flex-1 flex-col">
-          {isExpanded ? <ExpandedView /> : <TerminalGrid />}
+          <TerminalGrid />
           <AnimatePresence>
             {showCommandPalette && (
               <CommandPalette onClose={() => setShowCommandPalette(false)} />
