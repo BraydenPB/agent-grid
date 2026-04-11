@@ -441,9 +441,11 @@ export function TerminalGrid() {
       const state = useWorkspaceStore.getState();
       const api = localDockviewApi;
 
-      // Update active workspace's Dockview layout before saving
+      // Update active workspace's Dockview layout before saving.
+      // Skip when in level 2/3 — the live grid only shows a subset of panes,
+      // and persisting that would overwrite the canonical full layout.
       let workspaces = state.workspaces;
-      if (api && state.activeWorkspaceId) {
+      if (api && state.activeWorkspaceId && !state.expandedPaneId) {
         try {
           const dockviewLayout = api.toJSON();
           workspaces = workspaces.map((w) =>

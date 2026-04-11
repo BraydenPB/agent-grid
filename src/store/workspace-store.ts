@@ -53,6 +53,40 @@ function createWorkspaceTab(
   };
 }
 
+/**
+ * When switching away from a workspace, capture the correct outgoing layout
+ * and reset all expansion state. If the user is in level 2/3, the live
+ * Dockview JSON is a truncated subset — use the saved pre-expand layout instead.
+ */
+function collapseAndCaptureOutgoing(state: WorkspaceState): {
+  dockviewLayout: unknown;
+  expansionReset: Partial<WorkspaceState>;
+} {
+  let dockviewLayout: unknown = null;
+  if (state.expandedPaneId && state.preExpandLayout) {
+    // Currently expanded — the live grid only shows a subset; use saved layout
+    dockviewLayout = state.preExpandLayout;
+  } else {
+    try {
+      if (dockviewApiRef.current)
+        dockviewLayout = dockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    dockviewLayout,
+    expansionReset: {
+      expandedPaneId: null,
+      level2PaneIds: [],
+      preExpandLayout: null,
+      level2Layout: null,
+      level3PaneId: null,
+      preLevel3Layout: null,
+    },
+  };
+}
+
 /** Get the active workspace from state */
 function getActive(state: WorkspaceState): WorkspaceTab | undefined {
   return state.workspaces.find((w) => w.id === state.activeWorkspaceId);
@@ -188,14 +222,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   addWorkspace: (name, cwd, profileId) => {
     const ws = createWorkspaceTab(name, cwd, profileId ?? 'system-shell');
 
-    // Save outgoing workspace's Dockview layout before switching
-    let dockviewLayout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        dockviewLayout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
+    const { dockviewLayout, expansionReset } =
+      collapseAndCaptureOutgoing(get());
 
     set((s) => ({
       workspaces: [
@@ -205,6 +233,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ws,
       ],
       activeWorkspaceId: ws.id,
+      ...expansionReset,
       layoutVersion: s.layoutVersion + 1,
       showProjectBrowser: false,
     }));
@@ -229,9 +258,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       nextActiveId = remaining[Math.min(idx, remaining.length - 1)]?.id ?? null;
     }
 
+    // Clear expansion state if the removed workspace owned the expanded pane
+    const needsReset =
+      state.expandedPaneId &&
+      ws.panes.some((p) => p.id === state.expandedPaneId);
+
     set((s) => ({
       workspaces: remaining,
       activeWorkspaceId: nextActiveId,
+      ...(needsReset
+        ? {
+            expandedPaneId: null,
+            level2PaneIds: [],
+            preExpandLayout: null,
+            level2Layout: null,
+            level3PaneId: null,
+            preLevel3Layout: null,
+          }
+        : {}),
       layoutVersion: s.layoutVersion + 1,
     }));
   },
@@ -240,20 +284,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const state = get();
     if (state.activeWorkspaceId === id) return;
 
-    // Serialize current Dockview layout into the outgoing workspace
-    let dockviewLayout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        dockviewLayout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
+    const { dockviewLayout, expansionReset } =
+      collapseAndCaptureOutgoing(state);
 
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
         w.id === s.activeWorkspaceId ? { ...w, dockviewLayout } : w,
       ),
       activeWorkspaceId: id,
+      ...expansionReset,
       layoutVersion: s.layoutVersion + 1,
     }));
   },
@@ -263,7 +302,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, name } : w)),
     })),
 
-  nextWorkspace: () =>
+  nextWorkspace: () => {
+    const { dockviewLayout, expansionReset } =
+      collapseAndCaptureOutgoing(get());
     set((state) => {
       if (state.workspaces.length <= 1) return state;
       const idx = state.workspaces.findIndex(
@@ -271,25 +312,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       );
       const nextIdx = (idx + 1) % state.workspaces.length;
 
-      // Save outgoing Dockview layout
-      let dockviewLayout: unknown = null;
-      try {
-        if (dockviewApiRef.current)
-          dockviewLayout = dockviewApiRef.current.toJSON();
-      } catch {
-        /* ignore */
-      }
-
       return {
         workspaces: state.workspaces.map((w) =>
           w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
         ),
         activeWorkspaceId: state.workspaces[nextIdx]!.id,
+        ...expansionReset,
         layoutVersion: state.layoutVersion + 1,
       };
-    }),
+    });
+  },
 
-  prevWorkspace: () =>
+  prevWorkspace: () => {
+    const { dockviewLayout, expansionReset } =
+      collapseAndCaptureOutgoing(get());
     set((state) => {
       if (state.workspaces.length <= 1) return state;
       const idx = state.workspaces.findIndex(
@@ -298,22 +334,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const prevIdx =
         (idx - 1 + state.workspaces.length) % state.workspaces.length;
 
-      let dockviewLayout: unknown = null;
-      try {
-        if (dockviewApiRef.current)
-          dockviewLayout = dockviewApiRef.current.toJSON();
-      } catch {
-        /* ignore */
-      }
-
       return {
         workspaces: state.workspaces.map((w) =>
           w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
         ),
         activeWorkspaceId: state.workspaces[prevIdx]!.id,
+        ...expansionReset,
         layoutVersion: state.layoutVersion + 1,
       };
-    }),
+    });
+  },
 
   /* ── Level 2 — expand/collapse ── */
 
@@ -792,13 +822,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   saveCustomLayout: (name) => {
     const state = get();
-    // Serialize current Dockview layout into active workspace
+    // Use canonical layout when expanded (live grid is a filtered subset)
     let dockviewLayout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        dockviewLayout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
+    if (state.expandedPaneId && state.preExpandLayout) {
+      dockviewLayout = state.preExpandLayout;
+    } else {
+      try {
+        if (dockviewApiRef.current)
+          dockviewLayout = dockviewApiRef.current.toJSON();
+      } catch {
+        /* ignore */
+      }
     }
     const workspaces = state.workspaces.map((w) =>
       w.id === state.activeWorkspaceId ? { ...w, dockviewLayout } : w,
