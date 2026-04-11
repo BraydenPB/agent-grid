@@ -549,6 +549,7 @@ export function TerminalPane({
       return () => {
         disposed = true;
         resizeObserver.disconnect();
+        if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
         // Detach xterm element from DOM but keep it alive in the registry
         if (existing.element.parentNode) {
           existing.element.parentNode.removeChild(existing.element);
@@ -647,6 +648,7 @@ export function TerminalPane({
     return () => {
       disposed = true;
       resizeObserver.disconnect();
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       // Detach xterm element but keep in registry for potential reattach
       if (xtermContainer.parentNode) {
         xtermContainer.parentNode.removeChild(xtermContainer);

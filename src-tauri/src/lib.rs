@@ -265,9 +265,58 @@ fn canonicalize_worktree_result(cwd: &Path, path: &str) -> String {
         .to_string()
 }
 
+/// Spawn a git command with a deadline, returning (stdout, stderr) on success.
+fn run_git_with_deadline(
+    args: &[&str],
+    cwd: &Path,
+    timeout_secs: u64,
+) -> Result<(String, String), String> {
+    let mut child = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child.stdout.take().map(|mut o| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = o.read_to_string(&mut buf);
+                    buf
+                }).unwrap_or_default();
+                let stderr = child.stderr.take().map(|mut e| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = e.read_to_string(&mut buf);
+                    buf
+                }).unwrap_or_default();
+
+                if status.success() {
+                    return Ok((stdout, stderr));
+                }
+                return Err(stderr);
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("git command timed out".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("git command failed: {}", e)),
+        }
+    }
+}
+
 #[tauri::command]
 fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, String> {
-    // Canonicalize cwd and validate the target path stays within it
+    // Canonicalize cwd to resolve symlinks and ".." traversal
     let cwd_path = Path::new(&cwd)
         .canonicalize()
         .map_err(|e| format!("Invalid cwd '{}': {}", cwd, e))?;
@@ -279,9 +328,11 @@ fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, 
         cwd_path.join(&path)
     };
 
-    // Containment check: target must be under cwd (prevent path traversal)
-    // Use lexical check on the joined path — canonicalize isn't possible yet
-    // since the directory doesn't exist. Normalize ".." components instead.
+    // Containment check: target must be under the project's parent directory.
+    // Standard git worktree placement is as a sibling of the project directory,
+    // so we check against the parent rather than the project itself. This still
+    // prevents deep traversal (e.g., ../../etc/evil) while allowing the standard
+    // sibling pattern (e.g., ../feature-branch alongside the project).
     let mut normalized = Vec::new();
     for component in target.components() {
         match component {
@@ -291,33 +342,30 @@ fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, 
         }
     }
     let normalized_path: std::path::PathBuf = normalized.iter().collect();
-    if !normalized_path.starts_with(&cwd_path) {
-        return Err("Worktree path must be within the project directory".to_string());
+    let container = cwd_path.parent().unwrap_or(&cwd_path);
+    if !normalized_path.starts_with(container) {
+        return Err("Worktree path must be within the project's parent directory".to_string());
     }
 
-    let output = std::process::Command::new("git")
-        .args(["worktree", "add", &path, "-b", &branch])
-        .current_dir(&cwd_path)
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
-
-    if output.status.success() {
-        return Ok(canonicalize_worktree_result(&cwd_path, &path));
+    // Try creating with a new branch first (10-second deadline to avoid hanging)
+    match run_git_with_deadline(
+        &["worktree", "add", &path, "-b", &branch],
+        &cwd_path,
+        10,
+    ) {
+        Ok(_) => return Ok(canonicalize_worktree_result(&cwd_path, &path)),
+        Err(_) => {}
     }
 
-    // Branch exists — try without -b
-    let output2 = std::process::Command::new("git")
-        .args(["worktree", "add", &path, &branch])
-        .current_dir(&cwd_path)
-        .output()
-        .map_err(|e| format!("Failed to run git: {}", e))?;
-
-    if output2.status.success() {
-        return Ok(canonicalize_worktree_result(&cwd_path, &path));
+    // Branch may already exist — try without -b
+    match run_git_with_deadline(
+        &["worktree", "add", &path, &branch],
+        &cwd_path,
+        10,
+    ) {
+        Ok(_) => Ok(canonicalize_worktree_result(&cwd_path, &path)),
+        Err(stderr) => Err(format!("git worktree add failed: {}", stderr)),
     }
-
-    let stderr = String::from_utf8_lossy(&output2.stderr);
-    Err(format!("git worktree add failed: {}", stderr))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

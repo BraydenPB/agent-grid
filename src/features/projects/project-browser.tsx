@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Folder,
   GitBranch,
@@ -101,7 +100,10 @@ export function ProjectBrowser({
 
     setLoading(true);
     setError(null);
-    invoke<ProjectInfo[]>('list_projects', { dir: projectsPath })
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) =>
+        invoke<ProjectInfo[]>('list_projects', { dir: projectsPath }),
+      )
       .then((result) => {
         if (!ignore) setProjects(result);
       })
@@ -393,7 +395,7 @@ export function ProjectBrowser({
           <div className="grid grid-cols-2 gap-2">
             {/* New terminal — primary CTA */}
             <button
-              onClick={() => addPane(profiles[0]!.id)}
+              onClick={() => addPane(profiles[0]?.id ?? 'system-shell')}
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3.5 py-3 text-left',
                 'text-zinc-200 transition-all duration-100',
@@ -448,7 +450,9 @@ export function ProjectBrowser({
             {GRID_PRESETS.slice(0, 5).map((preset) => (
               <button
                 key={preset.name}
-                onClick={() => applyPreset(preset.name, profiles[0]!.id)}
+                onClick={() =>
+                  applyPreset(preset.name, profiles[0]?.id ?? 'system-shell')
+                }
                 title={preset.name}
                 className={cn(
                   'flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[10px] font-medium',
@@ -769,7 +773,7 @@ function ProjectRow({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          onLaunch(profiles[0]!);
+          if (profiles[0]) onLaunch(profiles[0]);
         }}
         className={cn(
           'flex h-5 w-5 shrink-0 items-center justify-center rounded',

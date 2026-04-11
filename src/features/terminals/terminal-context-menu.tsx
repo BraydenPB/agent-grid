@@ -109,8 +109,14 @@ export function TerminalContextMenu({
     const ws = getActiveWorkspace(s);
     return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
   });
-  const currentProfile =
-    profiles.find((p) => p.id === profileId) ?? profiles[0]!;
+  const currentProfile = profiles.find((p) => p.id === profileId) ??
+    profiles[0] ?? {
+      id: profileId,
+      name: 'Terminal',
+      command: '',
+      args: [],
+      color: '#6b7280',
+    };
   const effectiveColor = paneColorOverride ?? currentProfile.color ?? '#6b7280';
 
   const setMainPane = useWorkspaceStore((s) => s.setMainPane);
