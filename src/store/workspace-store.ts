@@ -95,6 +95,8 @@ interface WorkspaceState {
   level2PaneIds: string[];
   /** Dockview layout saved before entering level 2 */
   preExpandLayout: unknown;
+  /** Dockview layout saved from level 2 (for re-expansion) */
+  level2Layout: unknown;
 
   // Workspace tab actions
   addWorkspace: (name: string, cwd?: string, profileId?: string) => string;
@@ -156,6 +158,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   expandedPaneId: null,
   level2PaneIds: [],
   preExpandLayout: null,
+  level2Layout: null,
   profiles: (() => {
     const saved = loadProfileColors();
     return DEFAULT_PROFILES.map((p) => ({
@@ -306,7 +309,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   /* ── Level 2 — expand/collapse ── */
 
   expandPane: (paneId) => {
-    // Save Dockview layout before expanding
+    // Save grid Dockview layout before expanding
     let preExpandLayout: unknown = null;
     try {
       if (dockviewApiRef.current)
@@ -315,38 +318,42 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       /* ignore */
     }
 
+    const state = get();
+    const ws = getActive(state);
+
+    // If re-expanding the same pane, reuse its saved level 2 pane IDs
+    const existingL2 =
+      ws?.panes
+        .filter((p) => p.id !== paneId)
+        .filter((p) => {
+          // A pane is a level 2 pane if it was previously tracked
+          return state.level2PaneIds.includes(p.id);
+        })
+        .map((p) => p.id) ?? [];
+
     set((s) => ({
       expandedPaneId: paneId,
-      level2PaneIds: [],
+      level2PaneIds: existingL2,
       preExpandLayout,
-      // Clear maximize — we handle fullscreen ourselves
       ...updateActive(s, () => ({ maximizedPaneId: null })),
       layoutVersion: s.layoutVersion + 1,
     }));
   },
 
   collapsePane: () => {
-    const state = get();
-    const ws = getActive(state);
-    if (!ws) return;
-
-    // Remove level 2 panes from the workspace
-    const l2Ids = new Set(state.level2PaneIds);
-    for (const id of l2Ids) {
-      destroyTerminalEntry(id);
+    // Save the level 2 Dockview layout for re-expansion
+    let level2Layout: unknown = null;
+    try {
+      if (dockviewApiRef.current)
+        level2Layout = dockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
     }
-    const remainingPanes = ws.panes.filter((p) => !l2Ids.has(p.id));
 
     set((s) => ({
-      ...updateActive(s, () => ({
-        panes: remainingPanes,
-        activePaneId:
-          remainingPanes.find((p) => p.id === s.expandedPaneId)?.id ??
-          remainingPanes[0]?.id ??
-          null,
-      })),
       expandedPaneId: null,
-      level2PaneIds: [],
+      // Keep level2PaneIds so re-expand knows which panes belong to level 2
+      level2Layout,
       layoutVersion: s.layoutVersion + 1,
     }));
   },

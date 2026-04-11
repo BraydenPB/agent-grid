@@ -188,8 +188,22 @@ export function TerminalGrid() {
         try {
           api.fromJSON(storeState.preExpandLayout as any);
           previousPanesRef.current = panes.map((p) => p.id);
-          // Clear saved layout now that it's restored
           useWorkspaceStore.setState({ preExpandLayout: null });
+          requestAnimationFrame(() => {
+            programmaticChangeRef.current = false;
+          });
+          return;
+        } catch {
+          // fall through to manual rebuild
+        }
+      }
+
+      // Expanding into level 2 — restore saved level 2 layout if available
+      if (storeState.expandedPaneId && storeState.level2Layout) {
+        try {
+          api.fromJSON(storeState.level2Layout as any);
+          previousPanesRef.current = panes.map((p) => p.id);
+          useWorkspaceStore.setState({ level2Layout: null });
           requestAnimationFrame(() => {
             programmaticChangeRef.current = false;
           });
