@@ -410,6 +410,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           panes: resultPanes,
           activePaneId: resultPanes[0]?.id ?? null,
           activePreset: presetName,
+          dockviewLayout: null,
         })),
         layoutVersion: state.layoutVersion + 1,
         showProjectBrowser: false,
@@ -426,6 +427,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           activePaneId: null,
           activePreset: null,
           maximizedPaneId: null,
+          dockviewLayout: null,
         })),
         layoutVersion: state.layoutVersion + 1,
       };

@@ -78,6 +78,20 @@ export function TerminalGrid() {
       previousPanesRef.current = panes.map((p) => p.id);
       previousLayoutVersionRef.current = layoutVersion;
 
+      // Restore saved Dockview layout if available
+      const savedLayout = useWorkspaceStore.getState();
+      const activeWs = savedLayout.workspaces.find(
+        (w) => w.id === savedLayout.activeWorkspaceId,
+      );
+      if (activeWs?.dockviewLayout) {
+        try {
+          event.api.fromJSON(activeWs.dockviewLayout as any);
+          return;
+        } catch {
+          // fall through to manual rebuild
+        }
+      }
+
       const addedIds = new Set<string>();
       panes.forEach((pane, index) => {
         const profile =
@@ -156,6 +170,24 @@ export function TerminalGrid() {
     if (layoutVersion !== previousLayoutVersionRef.current) {
       previousLayoutVersionRef.current = layoutVersion;
       programmaticChangeRef.current = true;
+
+      // Restore saved Dockview layout if available
+      const storeState = useWorkspaceStore.getState();
+      const incomingWs = storeState.workspaces.find(
+        (w) => w.id === storeState.activeWorkspaceId,
+      );
+      if (incomingWs?.dockviewLayout) {
+        try {
+          api.fromJSON(incomingWs.dockviewLayout as any);
+          previousPanesRef.current = panes.map((p) => p.id);
+          requestAnimationFrame(() => {
+            programmaticChangeRef.current = false;
+          });
+          return;
+        } catch {
+          // fall through to manual rebuild
+        }
+      }
 
       try {
         api.clear();
