@@ -66,7 +66,7 @@ export const GRID_PRESETS: GridPresetLayout[] = [
     ],
   },
   {
-    name: '2×2×2 Grid (8 panes)',
+    name: '2×4 Grid (8 panes)',
     panelCount: 8,
     positions: [
       {}, // 0

@@ -148,6 +148,73 @@ function updateProject(
   );
 }
 
+/**
+ * Ensure a project is ready to be shown on the dashboard:
+ * - Has at least one worktree
+ * - Has a mainPaneId pointing at a real pane in the active worktree
+ *
+ * Pure: returns updated {projects, worktrees} without touching the store.
+ * Used by both openProject (single) and openProjects (batch) so the
+ * creation logic stays in one place.
+ */
+function ensureProjectReady(
+  projects: Project[],
+  worktrees: Record<string, WorktreeTab>,
+  projectId: string,
+): { projects: Project[]; worktrees: Record<string, WorktreeTab> } {
+  const project = projects.find((p) => p.id === projectId);
+  if (!project) return { projects, worktrees };
+
+  if (project.worktreeIds.length === 0) {
+    const wt = createWorktreeTab(
+      project.id,
+      'main',
+      'main',
+      project.path,
+      project.defaultProfileId,
+    );
+    const nextWorktrees = { ...worktrees, [wt.id]: wt };
+    const updated: Project = {
+      ...project,
+      worktreeIds: [wt.id],
+      activeWorktreeId: wt.id,
+      mainPaneId: wt.panes[0]?.id ?? null,
+      updatedAt: new Date().toISOString(),
+    };
+    return {
+      projects: projects.map((p) => (p.id === projectId ? updated : p)),
+      worktrees: nextWorktrees,
+    };
+  }
+
+  const activeWt = worktrees[project.activeWorktreeId];
+  if (!project.mainPaneId && activeWt && activeWt.panes.length > 0) {
+    return {
+      projects: updateProject(projects, projectId, {
+        mainPaneId: activeWt.panes[0]!.id,
+      }),
+      worktrees,
+    };
+  }
+
+  if (!project.mainPaneId && activeWt) {
+    const pane = createPane(project.defaultProfileId);
+    pane.cwd = activeWt.cwd;
+    const updatedWt: WorktreeTab = {
+      ...activeWt,
+      panes: [...activeWt.panes, pane],
+      activePaneId: pane.id,
+      updatedAt: new Date().toISOString(),
+    };
+    return {
+      projects: updateProject(projects, projectId, { mainPaneId: pane.id }),
+      worktrees: { ...worktrees, [activeWt.id]: updatedWt },
+    };
+  }
+
+  return { projects, worktrees };
+}
+
 /* ── Exported selectors ── */
 
 /**
@@ -223,6 +290,13 @@ export interface WorkspaceState {
   // Dashboard (level 2)
   openProjectIds: string[];
   dashboardLayout: unknown;
+  /**
+   * Name of the grid preset currently applied to the dashboard (level 2).
+   * Null = auto-tile (gridClassesForCount).
+   * The preset only takes effect when its panelCount matches openProjectIds.length;
+   * otherwise DashboardGrid falls back to auto-tile.
+   */
+  activeDashboardPreset: string | null;
 
   // Flat worktree map (keyed by worktree ID)
   worktrees: Record<string, WorktreeTab>;
@@ -242,6 +316,14 @@ export interface WorkspaceState {
   addProject: (name: string, path: string) => string;
   removeProject: (id: string) => void;
   openProject: (id: string) => void;
+  /**
+   * Open multiple projects at once and land on the dashboard.
+   * - Appends to openProjectIds (never replaces — running terminals are preserved)
+   * - Ensures each project has a worktree + main pane
+   * - Sets activeDashboardPreset to the passed name (null = auto-tile)
+   * - Navigates to level 2
+   */
+  openProjects: (projectIds: string[], presetName: string | null) => void;
   closeProject: (id: string) => void;
   focusProject: (id: string) => void;
   /**
@@ -319,6 +401,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   currentLevel: (cachedStartupLayout ? 2 : 1) as 1 | 2 | 3,
   openProjectIds: [],
   dashboardLayout: null,
+  activeDashboardPreset: null,
   worktrees: {},
   profiles: (() => {
     const saved = loadProfileColors();
@@ -418,51 +501,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ currentLevel: 2 });
       return;
     }
+    if (!state.projects.some((p) => p.id === id)) return;
 
-    const project = state.projects.find((p) => p.id === id);
-    if (!project) return;
-
-    // Ensure project has a main worktree tab with at least one pane
-    let worktrees = state.worktrees;
-    let projects = state.projects;
-    if (project.worktreeIds.length === 0) {
-      const wt = createWorktreeTab(
-        project.id,
-        'main',
-        'main',
-        project.path,
-        project.defaultProfileId,
-      );
-      worktrees = { ...worktrees, [wt.id]: wt };
-      const updated = {
-        ...project,
-        worktreeIds: [wt.id],
-        activeWorktreeId: wt.id,
-        mainPaneId: wt.panes[0]?.id ?? null,
-        updatedAt: new Date().toISOString(),
-      };
-      projects = projects.map((p) => (p.id === id ? updated : p));
-    } else {
-      // Ensure mainPaneId exists
-      const activeWt = worktrees[project.activeWorktreeId];
-      if (!project.mainPaneId && activeWt && activeWt.panes.length > 0) {
-        projects = updateProject(projects, id, {
-          mainPaneId: activeWt.panes[0]!.id,
-        });
-      } else if (!project.mainPaneId && activeWt) {
-        // No panes — create one
-        const pane = createPane(project.defaultProfileId);
-        pane.cwd = activeWt.cwd;
-        const updatedWt = {
-          ...activeWt,
-          panes: [...activeWt.panes, pane],
-          activePaneId: pane.id,
-          updatedAt: new Date().toISOString(),
-        };
-        worktrees = { ...worktrees, [activeWt.id]: updatedWt };
-        projects = updateProject(projects, id, { mainPaneId: pane.id });
-      }
-    }
+    const { projects, worktrees } = ensureProjectReady(
+      state.projects,
+      state.worktrees,
+      id,
+    );
 
     set((s) => ({
       projects,
@@ -474,6 +519,43 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
 
     // Flush to localStorage — openProjectIds changed
+    saveLayout(get());
+  },
+
+  openProjects: (ids, presetName) => {
+    const state = get();
+    if (ids.length === 0) {
+      set({ currentLevel: 2 });
+      return;
+    }
+
+    let projects = state.projects;
+    let worktrees = state.worktrees;
+
+    // Ensure each selected project has a worktree + main pane
+    for (const id of ids) {
+      const ready = ensureProjectReady(projects, worktrees, id);
+      projects = ready.projects;
+      worktrees = ready.worktrees;
+    }
+
+    // Append only IDs that exist and aren't already open (preserve running work)
+    const newIds = ids.filter(
+      (id) =>
+        projects.some((p) => p.id === id) && !state.openProjectIds.includes(id),
+    );
+
+    set((s) => ({
+      projects,
+      worktrees,
+      openProjectIds: [...s.openProjectIds, ...newIds],
+      activeDashboardPreset: presetName,
+      currentLevel: 2,
+      dashboardLayout: null,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+
+    // Flush to localStorage — openProjectIds / preset changed
     saveLayout(get());
   },
 
@@ -1334,6 +1416,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       openProjectIds,
       activeProjectId,
       dashboardLayout: saved.dashboardLayout ?? null,
+      activeDashboardPreset: saved.activeDashboardPreset ?? null,
       rootFolderPath: saved.rootFolderPath ?? state.rootFolderPath,
       currentLevel: saved.currentLevel ?? (openProjectIds.length > 0 ? 2 : 1),
       layoutVersion: state.layoutVersion + 1,

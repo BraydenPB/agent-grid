@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
 import { X, GitBranch, Maximize2, FolderOpen } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useWorkspaceStore, getOpenProjects } from '@/store/workspace-store';
 import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
+import { GRID_PRESETS } from '@/lib/grid-presets';
 import { cn } from '@/lib/utils';
 import type { Project, Pane, TerminalProfile } from '@/types';
 import { TerminalPane } from '@/features/terminals/terminal-pane';
@@ -34,12 +36,53 @@ function gridClassesForCount(count: number): string {
   return 'grid-cols-[repeat(auto-fit,minmax(360px,1fr))]';
 }
 
+/**
+ * Preset → CSS grid layout. Keys must match GRID_PRESETS[].name exactly.
+ * `tileClasses` is an optional per-tile class list for irregular presets
+ * (e.g. the first tile of 1+2 Stack spans 2 rows).
+ */
+const PRESET_TO_CSS: Record<
+  string,
+  { container: string; tileClasses?: string[] }
+> = {
+  Single: { container: 'grid-cols-1 grid-rows-1' },
+  'Side by Side': { container: 'grid-cols-2 grid-rows-1' },
+  '2×2 Grid': { container: 'grid-cols-2 grid-rows-2' },
+  '1 + 2 Stack': {
+    container: 'grid-cols-2 grid-rows-2',
+    tileClasses: ['row-span-2', '', ''],
+  },
+  '3 Column': { container: 'grid-cols-3 grid-rows-1' },
+  '2×3 Grid': { container: 'grid-cols-3 grid-rows-2' },
+  '2×4 Grid (8 panes)': { container: 'grid-cols-2 grid-rows-4' },
+};
+
+/**
+ * Resolve the effective dashboard layout. Returns the preset layout if the
+ * active preset's panelCount matches the tile count exactly; otherwise falls
+ * back to the auto-tile.
+ */
+function resolveDashboardLayout(
+  tileCount: number,
+  activePresetName: string | null,
+): { container: string; tileClasses?: string[] } {
+  if (activePresetName) {
+    const preset = GRID_PRESETS.find((p) => p.name === activePresetName);
+    const mapping = PRESET_TO_CSS[activePresetName];
+    if (preset && mapping && preset.panelCount === tileCount) {
+      return mapping;
+    }
+  }
+  return { container: gridClassesForCount(tileCount) };
+}
+
 interface DashboardTileProps {
   project: Project;
   mainPane: Pane | undefined;
+  className?: string;
 }
 
-function DashboardTile({ project, mainPane }: DashboardTileProps) {
+function DashboardTile({ project, mainPane, className }: DashboardTileProps) {
   const profiles = useWorkspaceStore((s) => s.profiles);
   const closeProject = useWorkspaceStore((s) => s.closeProject);
   const focusProject = useWorkspaceStore((s) => s.focusProject);
@@ -67,6 +110,7 @@ function DashboardTile({ project, mainPane }: DashboardTileProps) {
         isFocusedTile
           ? 'border-blue-500/40'
           : 'border-white/[0.06] hover:border-white/[0.10]',
+        className,
       )}
     >
       {/* Header bar */}
@@ -146,8 +190,11 @@ function DashboardTile({ project, mainPane }: DashboardTileProps) {
 }
 
 export function DashboardGrid() {
-  const openProjects = useWorkspaceStore(getOpenProjects);
+  const openProjects = useWorkspaceStore(useShallow(getOpenProjects));
   const worktrees = useWorkspaceStore((s) => s.worktrees);
+  const activeDashboardPreset = useWorkspaceStore(
+    (s) => s.activeDashboardPreset,
+  );
 
   // Derive one main pane per open project
   const tiles = useMemo(() => {
@@ -158,6 +205,11 @@ export function DashboardGrid() {
       return { project, mainPane };
     });
   }, [openProjects, worktrees]);
+
+  const layout = useMemo(
+    () => resolveDashboardLayout(tiles.length, activeDashboardPreset),
+    [tiles.length, activeDashboardPreset],
+  );
 
   // Empty state
   if (tiles.length === 0) {
@@ -185,14 +237,15 @@ export function DashboardGrid() {
       <div
         className={cn(
           'grid min-h-0 flex-1 gap-px bg-white/[0.04] p-px',
-          gridClassesForCount(tiles.length),
+          layout.container,
         )}
       >
-        {tiles.map(({ project, mainPane }) => (
+        {tiles.map(({ project, mainPane }, i) => (
           <DashboardTile
             key={project.id}
             project={project}
             mainPane={mainPane}
+            className={layout.tileClasses?.[i]}
           />
         ))}
       </div>

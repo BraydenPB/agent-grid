@@ -18,6 +18,8 @@ interface SavedLayoutV4 {
   activeProjectId: string | null;
   currentLevel: 1 | 2 | 3;
   dashboardLayout: unknown;
+  /** Name of the grid preset currently applied to the dashboard (level 2). */
+  activeDashboardPreset?: string | null;
   rootFolderPath: string | null;
   savedAt: string;
 }
@@ -348,6 +350,7 @@ export function saveLayout(state: {
   activeProjectId: string | null;
   currentLevel: 1 | 2 | 3;
   dashboardLayout: unknown;
+  activeDashboardPreset?: string | null;
   rootFolderPath: string | null;
 }): void {
   const data: SavedLayoutV4 = {
@@ -358,6 +361,7 @@ export function saveLayout(state: {
     activeProjectId: state.activeProjectId,
     currentLevel: state.currentLevel,
     dashboardLayout: state.dashboardLayout,
+    activeDashboardPreset: state.activeDashboardPreset ?? null,
     rootFolderPath: state.rootFolderPath,
     savedAt: new Date().toISOString(),
   };
