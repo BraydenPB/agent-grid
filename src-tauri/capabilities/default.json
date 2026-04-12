@@ -12,6 +12,7 @@
     "core:window:allow-close",
     "opener:default",
     "os:default",
-    "pty:default"
+    "pty:default",
+    "dialog:default"
   ]
 }

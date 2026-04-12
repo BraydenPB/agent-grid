@@ -107,7 +107,13 @@ fn list_projects(dir: String) -> Result<Vec<ProjectInfo>, String> {
         }
 
         let name = entry.file_name().to_string_lossy().to_string();
+        // Strip \\?\ extended-length prefix that canonicalize() adds on Windows.
+        // Many programs (PowerShell, conpty) don't handle it as a CWD.
         let full_path = path.to_string_lossy().to_string();
+        let full_path = full_path
+            .strip_prefix("\\\\?\\")
+            .unwrap_or(&full_path)
+            .to_string();
         let git_branch = read_git_branch(&path);
         let git_dirty = if git_branch.is_some() {
             check_git_dirty(&path)
@@ -138,13 +144,242 @@ fn list_projects(dir: String) -> Result<Vec<ProjectInfo>, String> {
     Ok(projects)
 }
 
+/* ── Worktree commands ── */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: String,
+    pub is_main: bool,
+}
+
+#[tauri::command]
+fn list_worktrees(cwd: String) -> Result<Vec<WorktreeInfo>, String> {
+    // Canonicalize cwd to resolve ".." traversals (consistent with list_projects)
+    let cwd_path = Path::new(&cwd)
+        .canonicalize()
+        .map_err(|e| format!("Invalid path '{}': {}", cwd, e))?;
+
+    let mut child = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&cwd_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    // 5-second deadline to avoid hanging on pathological repos
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    let stderr = child.stderr.take().map(|mut e| {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        let _ = e.read_to_string(&mut buf);
+                        buf
+                    }).unwrap_or_default();
+                    return Err(format!("git worktree list failed: {}", stderr));
+                }
+                break;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("git worktree list timed out".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("git worktree list failed: {}", e)),
+        }
+    }
+
+    let stdout = child.stdout.take().map(|mut o| {
+        use std::io::Read;
+        let mut buf = String::new();
+        let _ = o.read_to_string(&mut buf);
+        buf
+    }).unwrap_or_default();
+    let mut worktrees = Vec::new();
+    let mut current_path = String::new();
+    let mut current_branch = String::new();
+    let mut is_bare = false;
+
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if !current_path.is_empty() && !is_bare {
+                worktrees.push(WorktreeInfo {
+                    path: current_path
+                        .strip_prefix("\\\\?\\")
+                        .unwrap_or(&current_path)
+                        .to_string(),
+                    branch: current_branch.clone(),
+                    is_main: worktrees.is_empty(),
+                });
+            }
+            current_path = path.to_string();
+            current_branch = String::new();
+            is_bare = false;
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            current_branch = branch.to_string();
+        } else if line == "bare" {
+            is_bare = true;
+        } else if line == "detached" {
+            current_branch = "(detached)".to_string();
+        }
+    }
+
+    if !current_path.is_empty() && !is_bare {
+        worktrees.push(WorktreeInfo {
+            path: current_path
+                .strip_prefix("\\\\?\\")
+                .unwrap_or(&current_path)
+                .to_string(),
+            branch: current_branch,
+            is_main: worktrees.is_empty(),
+        });
+    }
+
+    Ok(worktrees)
+}
+
+/// Canonicalize a worktree result path and strip the \\?\ prefix
+fn canonicalize_worktree_result(cwd: &Path, path: &str) -> String {
+    let wt_path = Path::new(path);
+    let abs_path = if wt_path.is_absolute() {
+        wt_path.to_path_buf()
+    } else {
+        cwd.join(wt_path)
+    };
+    let result = abs_path
+        .canonicalize()
+        .unwrap_or(abs_path)
+        .to_string_lossy()
+        .to_string();
+    result
+        .strip_prefix("\\\\?\\")
+        .unwrap_or(&result)
+        .to_string()
+}
+
+/// Spawn a git command with a deadline, returning (stdout, stderr) on success.
+fn run_git_with_deadline(
+    args: &[&str],
+    cwd: &Path,
+    timeout_secs: u64,
+) -> Result<(String, String), String> {
+    let mut child = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run git: {}", e))?;
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child.stdout.take().map(|mut o| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = o.read_to_string(&mut buf);
+                    buf
+                }).unwrap_or_default();
+                let stderr = child.stderr.take().map(|mut e| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = e.read_to_string(&mut buf);
+                    buf
+                }).unwrap_or_default();
+
+                if status.success() {
+                    return Ok((stdout, stderr));
+                }
+                return Err(stderr);
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("git command timed out".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("git command failed: {}", e)),
+        }
+    }
+}
+
+#[tauri::command]
+fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, String> {
+    // Canonicalize cwd to resolve symlinks and ".." traversal
+    let cwd_path = Path::new(&cwd)
+        .canonicalize()
+        .map_err(|e| format!("Invalid cwd '{}': {}", cwd, e))?;
+
+    // Resolve the target path relative to cwd
+    let target = if Path::new(&path).is_absolute() {
+        Path::new(&path).to_path_buf()
+    } else {
+        cwd_path.join(&path)
+    };
+
+    // Containment check: target must be under the project's parent directory.
+    // Standard git worktree placement is as a sibling of the project directory,
+    // so we check against the parent rather than the project itself. This still
+    // prevents deep traversal (e.g., ../../etc/evil) while allowing the standard
+    // sibling pattern (e.g., ../feature-branch alongside the project).
+    let mut normalized = Vec::new();
+    for component in target.components() {
+        match component {
+            std::path::Component::ParentDir => { normalized.pop(); }
+            std::path::Component::CurDir => {}
+            c => normalized.push(c),
+        }
+    }
+    let normalized_path: std::path::PathBuf = normalized.iter().collect();
+    let container = cwd_path.parent().unwrap_or(&cwd_path);
+    if !normalized_path.starts_with(container) {
+        return Err("Worktree path must be within the project's parent directory".to_string());
+    }
+
+    // Try creating with a new branch first (10-second deadline to avoid hanging)
+    match run_git_with_deadline(
+        &["worktree", "add", &path, "-b", &branch],
+        &cwd_path,
+        10,
+    ) {
+        Ok(_) => return Ok(canonicalize_worktree_result(&cwd_path, &path)),
+        Err(_) => {}
+    }
+
+    // Branch may already exist — try without -b
+    match run_git_with_deadline(
+        &["worktree", "add", &path, &branch],
+        &cwd_path,
+        10,
+    ) {
+        Ok(_) => Ok(canonicalize_worktree_result(&cwd_path, &path)),
+        Err(stderr) => Err(format!("git worktree add failed: {}", stderr)),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
-        .invoke_handler(tauri::generate_handler![list_projects])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            list_projects,
+            list_worktrees,
+            create_worktree,
+        ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| eprintln!("Failed to run Tauri application: {}", e));
 }

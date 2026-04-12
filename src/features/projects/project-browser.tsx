@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Folder,
   GitBranch,
@@ -14,6 +13,8 @@ import {
   LayoutGrid,
   Rows2,
   Square,
+  Command,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
@@ -78,8 +79,8 @@ export function ProjectBrowser({
     projectsPath,
     addPane,
     addPaneWithCwd,
+    addWorktreeTab,
     applyPreset,
-    setShowProjectBrowser,
     changeDirPaneId,
     setChangeDirPaneId,
     setPendingCwd,
@@ -99,7 +100,10 @@ export function ProjectBrowser({
 
     setLoading(true);
     setError(null);
-    invoke<ProjectInfo[]>('list_projects', { dir: projectsPath })
+    void import('@tauri-apps/api/core')
+      .then(({ invoke }) =>
+        invoke<ProjectInfo[]>('list_projects', { dir: projectsPath }),
+      )
       .then((result) => {
         if (!ignore) setProjects(result);
       })
@@ -140,9 +144,14 @@ export function ProjectBrowser({
         onClose?.();
         return;
       }
-      addPaneWithCwd(profile.id, project.path);
-      if (overlay) onClose?.();
-      else setShowProjectBrowser(false);
+      if (overlay) {
+        // Overlay mode — add pane to current workspace
+        addPaneWithCwd(profile.id, project.path);
+        onClose?.();
+      } else {
+        // Full-page mode — create a new workspace tab
+        addWorktreeTab('main', project.path, profile.id);
+      }
     },
     [
       changeDirPaneId,
@@ -151,8 +160,8 @@ export function ProjectBrowser({
       setChangeDirPaneId,
       onClose,
       addPaneWithCwd,
+      addWorktreeTab,
       overlay,
-      setShowProjectBrowser,
     ],
   );
 
@@ -347,60 +356,149 @@ export function ProjectBrowser({
   /* ── Full-page mode: landing experience ── */
   return (
     <div className="flex flex-1 flex-col items-center overflow-y-auto">
-      <div className="w-full max-w-[560px] px-6 py-8">
-        {/* Hero — minimal */}
+      <div className="w-full max-w-[600px] px-6 pt-10 pb-8">
+        {/* Hero */}
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25, ease }}
-          className="mb-6"
+          transition={{ duration: 0.3, ease }}
+          className="mb-8"
         >
-          <p className="text-[11px] leading-tight text-zinc-500">
-            Open a project or start a quick session
-          </p>
+          <div className="mb-3 flex items-center gap-3">
+            <div
+              className="flex h-8 w-8 items-center justify-center rounded-lg"
+              style={{ background: 'var(--accent-gradient)' }}
+            >
+              <Terminal size={16} className="text-white" strokeWidth={2} />
+            </div>
+            <div>
+              <h1 className="text-[16px] font-semibold tracking-tight text-zinc-100">
+                Agent Grid
+              </h1>
+              <p className="text-[11px] text-zinc-500">
+                Multi-pane AI terminal workspace
+              </p>
+            </div>
+          </div>
         </motion.div>
 
-        {/* Quick launch presets */}
+        {/* Quick actions */}
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25, ease, delay: 0.05 }}
-          className="mb-6"
+          transition={{ duration: 0.3, ease, delay: 0.05 }}
+          className="mb-8"
         >
-          <p className="mb-2 text-[10px] font-semibold tracking-[0.06em] text-zinc-600 uppercase">
+          <p className="mb-3 text-[10px] font-semibold tracking-[0.08em] text-zinc-600 uppercase">
             Quick Start
           </p>
-          <div className="flex items-center gap-2">
-            {/* New terminal button */}
+          <div className="grid grid-cols-2 gap-2">
+            {/* New terminal — primary CTA */}
             <button
-              onClick={() => addPane(profiles[0]!.id)}
+              onClick={() => addPane(profiles[0]?.id ?? 'system-shell')}
               className={cn(
-                'flex items-center gap-2 rounded-lg px-3 py-2 text-[11px] font-medium',
-                'text-zinc-300 transition-colors duration-100 hover:text-zinc-100',
-                'bg-white/[0.03] hover:bg-white/[0.06]',
+                'flex items-center gap-3 rounded-lg px-3.5 py-3 text-left',
+                'text-zinc-200 transition-all duration-100',
+                'bg-white/[0.04] hover:bg-white/[0.07]',
               )}
               style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.06)' }}
             >
-              <Terminal size={12} strokeWidth={1.5} />
-              <span>New Terminal</span>
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/[0.06]">
+                <Terminal
+                  size={14}
+                  strokeWidth={1.5}
+                  className="text-zinc-300"
+                />
+              </div>
+              <div>
+                <span className="text-[12px] font-medium">New Terminal</span>
+                <span className="block text-[10px] text-zinc-500">Ctrl+T</span>
+              </div>
             </button>
-            {/* Preset buttons */}
-            {GRID_PRESETS.slice(0, 4).map((preset) => (
+
+            {/* Command palette */}
+            <button
+              onClick={() =>
+                useWorkspaceStore.getState().setShowCommandPalette(true)
+              }
+              className={cn(
+                'flex items-center gap-3 rounded-lg px-3.5 py-3 text-left',
+                'text-zinc-200 transition-all duration-100',
+                'bg-white/[0.04] hover:bg-white/[0.07]',
+              )}
+              style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.06)' }}
+            >
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/[0.06]">
+                <Command
+                  size={14}
+                  strokeWidth={1.5}
+                  className="text-zinc-300"
+                />
+              </div>
+              <div>
+                <span className="text-[12px] font-medium">Command Palette</span>
+                <span className="block text-[10px] text-zinc-500">
+                  Ctrl+Shift+P
+                </span>
+              </div>
+            </button>
+          </div>
+
+          {/* Preset layout strip */}
+          <div className="mt-3 flex items-center gap-1.5">
+            <span className="mr-1 text-[10px] text-zinc-600">Layouts:</span>
+            {GRID_PRESETS.slice(0, 5).map((preset) => (
               <button
                 key={preset.name}
-                onClick={() => applyPreset(preset.name, profiles[0]!.id)}
+                onClick={() =>
+                  applyPreset(preset.name, profiles[0]?.id ?? 'system-shell')
+                }
                 title={preset.name}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-medium',
+                  'flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[10px] font-medium',
                   'text-zinc-500 transition-colors duration-100 hover:text-zinc-300',
-                  'hover:bg-white/[0.03]',
+                  'hover:bg-white/[0.04]',
                 )}
                 style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.04)' }}
               >
                 {PRESET_ICONS[preset.name] || (
-                  <LayoutGrid size={14} strokeWidth={1.5} />
+                  <LayoutGrid size={12} strokeWidth={1.5} />
                 )}
-                <span className="hidden sm:inline">{preset.name}</span>
+                <span>{preset.name}</span>
+              </button>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* AI Profiles */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, ease, delay: 0.1 }}
+          className="mb-8"
+        >
+          <p className="mb-3 text-[10px] font-semibold tracking-[0.08em] text-zinc-600 uppercase">
+            AI Agents
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {profiles.map((profile) => (
+              <button
+                key={profile.id}
+                onClick={() => addPane(profile.id)}
+                className={cn(
+                  'flex items-center gap-2 rounded-lg px-3 py-2',
+                  'text-zinc-400 transition-all duration-100 hover:text-zinc-200',
+                  'bg-white/[0.02] hover:bg-white/[0.05]',
+                )}
+                style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.04)' }}
+                title={`Launch ${profile.name}`}
+              >
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: profile.color || '#6b7280' }}
+                />
+                <span className="text-[11px] font-medium">{profile.name}</span>
+                <Zap size={9} className="text-zinc-700" />
               </button>
             ))}
           </div>
@@ -408,14 +506,16 @@ export function ProjectBrowser({
 
         {/* Projects section */}
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25, ease, delay: 0.1 }}
+          transition={{ duration: 0.3, ease, delay: 0.15 }}
         >
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-[10px] font-semibold tracking-[0.06em] text-zinc-600 uppercase">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-[10px] font-semibold tracking-[0.08em] text-zinc-600 uppercase">
               Projects
-              <span className="ml-1.5 text-zinc-700">{dirName}</span>
+              <span className="ml-1.5 font-normal text-zinc-700">
+                {dirName}
+              </span>
             </p>
             {!loading && (
               <span className="text-[10px] text-zinc-700">
@@ -427,7 +527,7 @@ export function ProjectBrowser({
           {/* Search */}
           <div className="relative mb-3">
             <Search
-              size={12}
+              size={13}
               className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-zinc-600"
             />
             <input
@@ -435,21 +535,21 @@ export function ProjectBrowser({
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter..."
+              placeholder="Search projects..."
               className={cn(
-                'h-8 w-full rounded-md pr-3 pl-8 text-[11px] text-zinc-200',
+                'h-9 w-full rounded-lg pr-3 pl-9 text-[12px] text-zinc-200',
                 'transition-all duration-100 outline-none placeholder:text-zinc-600',
-                'bg-white/[0.02]',
-                'focus:bg-white/[0.04] focus:ring-1 focus:ring-white/[0.08]',
+                'bg-white/[0.03]',
+                'focus:bg-white/[0.05] focus:ring-1 focus:ring-white/[0.1]',
               )}
-              style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.04)' }}
+              style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.05)' }}
             />
           </div>
 
           {/* Project list */}
           <div
             ref={listRef}
-            className="overflow-hidden rounded-lg"
+            className="max-h-[40vh] overflow-y-auto rounded-lg"
             style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.04)' }}
           >
             {loading ? (
@@ -480,7 +580,7 @@ export function ProjectBrowser({
 
           {/* Keyboard hints */}
           {!loading && filtered.length > 0 && (
-            <div className="mt-2.5 flex items-center gap-3 text-[10px] text-zinc-700">
+            <div className="mt-3 flex items-center gap-4 text-[10px] text-zinc-700">
               <div className="flex items-center gap-1">
                 <Kbd>&uarr;&darr;</Kbd>
                 <span>navigate</span>
@@ -488,14 +588,6 @@ export function ProjectBrowser({
               <div className="flex items-center gap-1">
                 <Kbd>&crarr;</Kbd>
                 <span>open</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Kbd>^T</Kbd>
-                <span>new terminal</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Kbd>^K</Kbd>
-                <span>projects</span>
               </div>
               <div className="ml-auto flex items-center gap-1">
                 <Keyboard size={9} />
@@ -681,7 +773,7 @@ function ProjectRow({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          onLaunch(profiles[0]!);
+          if (profiles[0]) onLaunch(profiles[0]);
         }}
         className={cn(
           'flex h-5 w-5 shrink-0 items-center justify-center rounded',

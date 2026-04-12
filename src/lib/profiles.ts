@@ -52,9 +52,13 @@ function quoteBash(arg: string): string {
   return "'" + arg.replace(/'/g, "'\\''") + "'";
 }
 
-/** Escape an argument for safe embedding in a PowerShell -Command string */
-function quotePowerShell(arg: string): string {
-  return "'" + arg.replace(/'/g, "''") + "'";
+/** Escape an argument for safe embedding in a cmd.exe /C command string */
+function quoteCmd(arg: string): string {
+  if (arg === '') return '""';
+  // No special characters — return as-is
+  if (!/[ \t"&|<>^%!()@,;=]/.test(arg)) return arg;
+  // Wrap in double quotes; escape % (variable expansion) and " (quote literal)
+  return '"' + arg.replace(/%/g, '%%').replace(/"/g, '""') + '"';
 }
 
 export function resolveShellCommand(
@@ -74,10 +78,15 @@ export function resolveShellCommand(
   // Each argument is individually quoted to prevent shell metacharacter injection.
   const parts = [profile.command, ...profile.args];
   if (osPlatform === 'windows') {
-    const cmdWithArgs = parts.map(quotePowerShell).join(' ');
+    // Use cmd.exe /C — PowerShell's -Command mode creates a non-interactive
+    // session that doesn't properly handle interactive CLI tools in a conpty.
+    // cmd.exe /C handles .cmd shims natively and inherits the conpty correctly.
+    // Build a single escaped command string (mirroring the bash -lc approach)
+    // so that spaces, &, |, %, etc. in paths/args are safe.
+    const cmdString = parts.map(quoteCmd).join(' ');
     return {
-      command: 'powershell.exe',
-      args: ['-NoLogo', '-Command', `& ${cmdWithArgs}`],
+      command: 'cmd.exe',
+      args: ['/C', cmdString],
     };
   }
   const cmdWithArgs = parts.map(quoteBash).join(' ');

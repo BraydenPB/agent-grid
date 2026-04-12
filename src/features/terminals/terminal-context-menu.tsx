@@ -21,9 +21,14 @@ import {
   ChevronRight,
   ChevronLeft,
   Palette,
+  Star,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import {
+  useWorkspaceStore,
+  getActiveWorktree,
+  getActiveProject,
+} from '@/store/workspace-store';
 import type { TerminalProfile } from '@/types';
 
 const VIEWPORT_PAD = 8;
@@ -98,15 +103,33 @@ export function TerminalContextMenu({
   onSplitBelow,
   onClose_pane,
 }: TerminalContextMenuProps) {
-  // Single source of truth: all profile data from the store
   const profiles = useWorkspaceStore((s) => s.profiles);
   const updatePaneColor = useWorkspaceStore((s) => s.updatePaneColor);
-  const paneColorOverride = useWorkspaceStore(
-    (s) => s.workspace.panes.find((p) => p.id === paneId)?.colorOverride,
-  );
-  const currentProfile =
-    profiles.find((p) => p.id === profileId) ?? profiles[0]!;
+  const paneColorOverride = useWorkspaceStore((s) => {
+    const ws = getActiveWorktree(s);
+    return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
+  });
+  const currentProfile = profiles.find((p) => p.id === profileId) ??
+    profiles[0] ?? {
+      id: profileId,
+      name: 'Terminal',
+      command: '',
+      args: [],
+      color: '#6b7280',
+    };
   const effectiveColor = paneColorOverride ?? currentProfile.color ?? '#6b7280';
+
+  const setMainPane = useWorkspaceStore((s) => s.setMainPane);
+  const isMainPane = useWorkspaceStore(
+    (s) => getActiveProject(s)?.mainPaneId === paneId,
+  );
+
+  const handleColorUpdate = useCallback(
+    (color: string) => {
+      updatePaneColor(paneId, color);
+    },
+    [paneId, updatePaneColor],
+  );
 
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
@@ -222,10 +245,10 @@ export function TerminalContextMenu({
     if (hex.length === 3) {
       hex = hex[0]! + hex[0]! + hex[1]! + hex[1]! + hex[2]! + hex[2]!;
     }
-    updatePaneColor(paneId, `#${hex}`);
+    handleColorUpdate(`#${hex}`);
     setColorPickerProfileId(null);
     setCustomHex('');
-  }, [pickerProfile, customHex, paneId, updatePaneColor]);
+  }, [pickerProfile, customHex, handleColorUpdate]);
 
   const applyInlineHex = useCallback(() => {
     if (inlineHex.length < 3) return;
@@ -233,10 +256,10 @@ export function TerminalContextMenu({
     if (hex.length === 3) {
       hex = hex[0]! + hex[0]! + hex[1]! + hex[1]! + hex[2]! + hex[2]!;
     }
-    updatePaneColor(paneId, `#${hex}`);
+    handleColorUpdate(`#${hex}`);
     setShowInlineColors(false);
     setInlineHex('');
-  }, [paneId, inlineHex, updatePaneColor]);
+  }, [inlineHex, handleColorUpdate]);
 
   const act = useCallback(
     (fn: () => void) => () => {
@@ -404,7 +427,7 @@ export function TerminalContextMenu({
                           <button
                             key={color}
                             onClick={() => {
-                              updatePaneColor(paneId, color);
+                              handleColorUpdate(color);
                               setColorPickerProfileId(null);
                               setCustomHex('');
                             }}
@@ -516,7 +539,7 @@ export function TerminalContextMenu({
                     key={color}
                     onClick={(e) => {
                       e.stopPropagation();
-                      updatePaneColor(paneId, color);
+                      handleColorUpdate(color);
                     }}
                     className={cn(
                       'flex h-[18px] w-[18px] items-center justify-center rounded-full transition-all hover:scale-125',
@@ -575,6 +598,14 @@ export function TerminalContextMenu({
             </div>
           </div>
         )}
+
+        {/* Set as Main Terminal */}
+        <Item
+          icon={<Star size={12} />}
+          label={isMainPane ? 'Main Terminal' : 'Set as Main'}
+          hint={isMainPane ? '\u2713' : undefined}
+          onClick={act(() => setMainPane(paneId))}
+        />
 
         <Sep />
 
@@ -640,6 +671,8 @@ export function TerminalContextMenu({
     document.body,
   );
 }
+
+/* ── Workspace toggle ── */
 
 /* ── Primitives ── */
 

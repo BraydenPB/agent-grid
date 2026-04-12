@@ -2,7 +2,11 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Command } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import {
+  useWorkspaceStore,
+  getActiveWorktree,
+  getActiveProject,
+} from '@/store/workspace-store';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 
 /* ── Action registry ── */
@@ -63,7 +67,8 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        if (s.activePaneId) s.removePane(s.activePaneId);
+        const ws = getActiveWorktree(s);
+        if (ws?.activePaneId) s.removePane(ws.activePaneId);
       },
     },
     {
@@ -73,8 +78,9 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
+        const ws = getActiveWorktree(s);
         const profileId =
-          s.workspace.panes.find((p) => p.id === s.activePaneId)?.profileId ??
+          ws?.panes.find((p) => p.id === ws?.activePaneId)?.profileId ??
           'system-shell';
         s.addPane(profileId, 'right');
       },
@@ -86,8 +92,9 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
+        const ws = getActiveWorktree(s);
         const profileId =
-          s.workspace.panes.find((p) => p.id === s.activePaneId)?.profileId ??
+          ws?.panes.find((p) => p.id === ws?.activePaneId)?.profileId ??
           'system-shell';
         s.addPane(profileId, 'below');
       },
@@ -99,7 +106,8 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        if (s.activePaneId) s.toggleMaximize(s.activePaneId);
+        const ws = getActiveWorktree(s);
+        if (ws?.activePaneId) s.toggleMaximize(ws.activePaneId);
       },
     },
     {
@@ -177,6 +185,23 @@ function buildActions(): PaletteAction[] {
     },
   );
 
+  // Navigation — levels
+  actions.push(
+    {
+      id: 'go-to-dashboard',
+      label: 'Go to Dashboard',
+      shortcut: 'Esc',
+      category: 'Navigation',
+      action: () => store().goToDashboard(),
+    },
+    {
+      id: 'go-to-folder-browser',
+      label: 'Go to Folder Browser',
+      category: 'Navigation',
+      action: () => store().goToFolderBrowser(),
+    },
+  );
+
   // Tools
   actions.push(
     {
@@ -194,6 +219,31 @@ function buildActions(): PaletteAction[] {
       action: () => store().setShowCommandPalette(true),
     },
   );
+
+  // Worktree — only if the active project has a path
+  const project = getActiveProject(store());
+  if (project?.path) {
+    actions.push({
+      id: 'new-worktree',
+      label: 'New Worktree',
+      shortcut: 'Ctrl+N',
+      category: 'Worktrees',
+      action: () => store().setShowWorktreeDialog(true),
+    });
+  }
+
+  // Close project from dashboard
+  const openProjects = store().projects.filter((p) =>
+    store().openProjectIds.includes(p.id),
+  );
+  for (const proj of openProjects) {
+    actions.push({
+      id: `close-project-${proj.id}`,
+      label: `Close Project: ${proj.name}`,
+      category: 'Projects',
+      action: () => store().closeProject(proj.id),
+    });
+  }
 
   return actions;
 }

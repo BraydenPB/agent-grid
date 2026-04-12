@@ -1,23 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
 import { PanelRight, PanelBottom, Bookmark, X } from 'lucide-react';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 import { cn } from '@/lib/utils';
 
 export function Sidebar() {
-  const {
-    workspace,
-    profiles,
-    addPane,
-    applyPreset,
-    clearAllPanes,
-    activePreset,
-    customLayouts,
-    saveCustomLayout,
-    deleteCustomLayout,
-    applyCustomLayout,
-  } = useWorkspaceStore();
-  const hasPanes = workspace.panes.length > 0;
+  const profiles = useWorkspaceStore((s) => s.profiles);
+  const addPane = useWorkspaceStore((s) => s.addPane);
+  const applyPreset = useWorkspaceStore((s) => s.applyPreset);
+  const clearAllPanes = useWorkspaceStore((s) => s.clearAllPanes);
+  const activeWorktree = useWorkspaceStore(getActiveWorktree);
+  const activePreset = activeWorktree?.activePreset ?? null;
+  const customLayouts = useWorkspaceStore((s) => s.customLayouts);
+  const saveCustomLayout = useWorkspaceStore((s) => s.saveCustomLayout);
+  const deleteCustomLayout = useWorkspaceStore((s) => s.deleteCustomLayout);
+  const applyCustomLayout = useWorkspaceStore((s) => s.applyCustomLayout);
+  const hasPanes = (activeWorktree?.panes.length ?? 0) > 0;
   const [splitDirection, setSplitDirection] = useState<'right' | 'below'>(
     'right',
   );
@@ -214,7 +212,10 @@ export function Sidebar() {
                   >
                     <span className="truncate">{layout.name}</span>
                     <span className="shrink-0 text-xs text-zinc-600">
-                      {layout.panes.length}
+                      {layout.workspaces.reduce(
+                        (n, w) => n + w.panes.length,
+                        0,
+                      )}
                     </span>
                   </button>
                   <button

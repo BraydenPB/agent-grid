@@ -15,7 +15,7 @@ export interface Pane {
   title: string;
   // Per-pane color override (takes precedence over profile color)
   colorOverride?: string;
-  // Initial working directory (set from project browser)
+  // Working directory (initial from project browser, live from OSC 7)
   cwd?: string;
   // Dockview positioning — resolved with stable pane IDs
   dockviewPosition?: {
@@ -29,10 +29,32 @@ export interface Pane {
   };
 }
 
-export interface Workspace {
+export interface WorktreeTab {
+  id: string;
+  projectId: string;
+  name: string;
+  branch: string;
+  cwd: string;
+  panes: Pane[];
+  activePaneId: string | null;
+  maximizedPaneId: string | null;
+  activePreset: string | null;
+  dockviewLayout: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/* ── Level system types ── */
+
+export interface Project {
   id: string;
   name: string;
-  panes: Pane[];
+  path: string;
+  mainPaneId: string | null;
+  defaultProfileId: string;
+  worktreeIds: string[];
+  activeWorktreeId: string;
+  color?: string;
   createdAt: string;
   updatedAt: string;
 }

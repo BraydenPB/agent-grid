@@ -8,12 +8,19 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { ImageAddon } from '@xterm/addon-image';
-import { X, Maximize2, Minimize2 } from 'lucide-react';
+import {
+  X,
+  Maximize2,
+  Minimize2,
+  PanelRight,
+  PanelBottom,
+  FolderOpen,
+} from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { spawnPty, getPlatform, type ShimPty } from '@/lib/tauri-shim';
 import { resolveShellCommand } from '@/lib/profiles';
 import { normalizeCwd } from '@/lib/cwd';
-import { useWorkspaceStore } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 import {
   getTerminalEntry,
   setTerminalEntry,
@@ -96,39 +103,27 @@ export function TerminalPane({
     visible: false,
   });
   const [cwd, setCwd] = useState<string>(initialCwd || '');
-  const profiles = useWorkspaceStore(
-    (s: { profiles: TerminalProfile[] }) => s.profiles,
-  );
-  const paneProfileId = useWorkspaceStore(
-    (s: { workspace: { panes: { id: string; profileId: string }[] } }) =>
-      s.workspace.panes.find(
-        (p: { id: string; profileId: string }) => p.id === paneId,
-      )?.profileId ?? initialProfile.id,
-  );
-  const updatePaneProfile = useWorkspaceStore(
-    (s: { updatePaneProfile: (paneId: string, profileId: string) => void }) =>
-      s.updatePaneProfile,
-  );
-  // Derive activeProfile from store — single source of truth for color etc.
+  const profiles = useWorkspaceStore((s) => s.profiles);
+  const paneProfileId = useWorkspaceStore((s) => {
+    const ws = getActiveWorktree(s);
+    return (
+      ws?.panes.find((p) => p.id === paneId)?.profileId ?? initialProfile.id
+    );
+  });
+  const updatePaneProfile = useWorkspaceStore((s) => s.updatePaneProfile);
   const activeProfile =
     profiles.find((p) => p.id === paneProfileId) ?? initialProfile;
-  // Per-pane color override takes precedence over profile color
-  const paneColorOverride = useWorkspaceStore(
-    (s) => s.workspace.panes.find((p) => p.id === paneId)?.colorOverride,
-  );
+  const paneColorOverride = useWorkspaceStore((s) => {
+    const ws = getActiveWorktree(s);
+    return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
+  });
   const effectiveColor = paneColorOverride ?? activeProfile.color ?? '#636d83';
 
-  // Get pane index for display (1-based)
-  const paneIndex = useWorkspaceStore(
-    (s: { workspace: { panes: { id: string }[] } }) =>
-      s.workspace.panes.findIndex((p: { id: string }) => p.id === paneId),
-  );
-  const toggleMaximize = useWorkspaceStore(
-    (s: { toggleMaximize: (id: string) => void }) => s.toggleMaximize,
-  );
-  const isMaximized = useWorkspaceStore(
-    (s: { maximizedPaneId: string | null }) => s.maximizedPaneId === paneId,
-  );
+  const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
+  const isMaximized = useWorkspaceStore((s) => {
+    const ws = getActiveWorktree(s);
+    return ws?.maximizedPaneId === paneId;
+  });
 
   /* ── Addon loading ── */
   const loadAddons = useCallback(
@@ -140,7 +135,20 @@ export function TerminalPane({
 
       try {
         const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => webglAddon.dispose());
+        webglAddon.onContextLoss(() => {
+          webglAddon.dispose();
+          // xterm falls back to its built-in canvas renderer after dispose.
+          // Try to re-create WebGL after a short delay.
+          setTimeout(() => {
+            try {
+              const replacement = new WebglAddon();
+              replacement.onContextLoss(() => replacement.dispose());
+              term.loadAddon(replacement);
+            } catch {
+              /* stay on canvas renderer */
+            }
+          }, 1000);
+        });
         term.loadAddon(webglAddon);
       } catch {
         /* Canvas renderer fallback */
@@ -201,29 +209,24 @@ export function TerminalPane({
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
           const sel = term.getSelection();
-          if (sel) void navigator.clipboard.writeText(sel);
+          if (sel) void navigator.clipboard.writeText(sel).catch(() => {});
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
-          void navigator.clipboard.readText().then((text) => {
-            entryRef.current?.pty?.write(text);
-          });
+          void navigator.clipboard
+            .readText()
+            .then((text) => {
+              entryRef.current?.pty?.write(text);
+            })
+            .catch(() => {});
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'D' && e.type === 'keydown') {
-          const store = useWorkspaceStore.getState();
-          const currentPane = store.workspace.panes.find(
-            (p) => p.id === paneId,
-          );
-          store.addPane(currentPane?.profileId ?? initialProfile.id, 'right');
+          useWorkspaceStore.getState().addPane(initialProfile.id, 'right');
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'E' && e.type === 'keydown') {
-          const store = useWorkspaceStore.getState();
-          const currentPane = store.workspace.panes.find(
-            (p) => p.id === paneId,
-          );
-          store.addPane(currentPane?.profileId ?? initialProfile.id, 'below');
+          useWorkspaceStore.getState().addPane(initialProfile.id, 'below');
           return false;
         }
         if (e.ctrlKey && e.shiftKey && e.key === 'W' && e.type === 'keydown') {
@@ -242,6 +245,10 @@ export function TerminalPane({
           resetFontSize();
           return false;
         }
+        // Let devtools shortcuts through to native WebView handler
+        if (e.key === 'F12') return false;
+        if (e.ctrlKey && e.shiftKey && e.key === 'I' && e.type === 'keydown')
+          return false;
         // Let global shortcuts through to window handler
         if (e.ctrlKey && e.shiftKey && e.key === 'P') return false;
         if (e.ctrlKey && !e.shiftKey && e.key === 't') return false;
@@ -253,10 +260,22 @@ export function TerminalPane({
         if (e.altKey && /^[1-9]$/.test(e.key)) return false;
         if (e.ctrlKey && e.key === 'Enter') return false;
         if (e.ctrlKey && e.altKey && e.key.startsWith('Arrow')) return false;
+        if (e.ctrlKey && e.shiftKey && e.key === 'Delete') return false;
+        // Let Escape bubble to the global handler (useGlobalShortcuts)
+        // — don't send to PTY; the global handler handles level/palette/maximize dismiss
+        if (
+          e.key === 'Escape' &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          e.type === 'keydown'
+        ) {
+          return false;
+        }
         return true;
       });
     },
-    [initialProfile.id, onClose, paneId],
+    [initialProfile.id, onClose],
   );
 
   /* ── Font zoom ── */
@@ -282,17 +301,24 @@ export function TerminalPane({
   };
 
   /* ── OSC sequence handler for shell integration ── */
-  const attachOscHandlers = useCallback((term: Terminal) => {
-    term.parser.registerOscHandler(7, (data) => {
-      const normalized = normalizeCwd(data, getPlatform());
-      if (normalized) setCwd(normalized);
-      return true;
-    });
+  const updatePaneCwd = useWorkspaceStore((s) => s.updatePaneCwd);
+  const attachOscHandlers = useCallback(
+    (term: Terminal) => {
+      term.parser.registerOscHandler(7, (data) => {
+        const normalized = normalizeCwd(data, getPlatform());
+        if (normalized) {
+          setCwd(normalized);
+          updatePaneCwd(paneId, normalized);
+        }
+        return true;
+      });
 
-    term.parser.registerOscHandler(133, () => true);
-    term.parser.registerOscHandler(0, () => false);
-    term.parser.registerOscHandler(2, () => false);
-  }, []);
+      term.parser.registerOscHandler(133, () => true);
+      term.parser.registerOscHandler(0, () => false);
+      term.parser.registerOscHandler(2, () => false);
+    },
+    [paneId, updatePaneCwd],
+  );
 
   /* ── Status helpers ── */
   const resetIdleTimer = useCallback(() => {
@@ -347,8 +373,9 @@ export function TerminalPane({
           if (!processExitedRef.current) {
             const currentStatus =
               usePaneStatusStore.getState().statuses[paneId];
-            const isCurrentlyActive =
-              useWorkspaceStore.getState().activePaneId === paneId;
+            const wsState = useWorkspaceStore.getState();
+            const activeWs = getActiveWorktree(wsState);
+            const isCurrentlyActive = activeWs?.activePaneId === paneId;
             if (!isCurrentlyActive && currentStatus !== 'attention') {
               setStatus(paneId, 'attention');
             } else if (isCurrentlyActive && currentStatus !== 'working') {
@@ -449,13 +476,16 @@ export function TerminalPane({
     const entry = entryRef.current;
     if (!entry) return;
     const sel = entry.terminal.getSelection();
-    if (sel) void navigator.clipboard.writeText(sel);
+    if (sel) void navigator.clipboard.writeText(sel).catch(() => {});
   }, []);
 
   const handlePaste = useCallback(() => {
-    void navigator.clipboard.readText().then((text) => {
-      entryRef.current?.pty?.write(text);
-    });
+    void navigator.clipboard
+      .readText()
+      .then((text) => {
+        entryRef.current?.pty?.write(text);
+      })
+      .catch(() => {});
   }, []);
 
   const handleClear = useCallback(() => {
@@ -519,6 +549,7 @@ export function TerminalPane({
       return () => {
         disposed = true;
         resizeObserver.disconnect();
+        if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
         // Detach xterm element from DOM but keep it alive in the registry
         if (existing.element.parentNode) {
           existing.element.parentNode.removeChild(existing.element);
@@ -532,8 +563,6 @@ export function TerminalPane({
     }
 
     // ── Create new terminal ──
-    const cancelled = { current: false };
-
     const xtermContainer = document.createElement('div');
     xtermContainer.style.width = '100%';
     xtermContainer.style.height = '100%';
@@ -613,16 +642,13 @@ export function TerminalPane({
     };
     requestAnimationFrame(tryFit);
 
-    // Spawn PTY
-    void (async () => {
-      if (cancelled.current) return;
-      await spawnProcess(entry, initialProfile, initialCwd || undefined);
-    })();
+    // Spawn PTY (spawnSeq guards against stale spawns)
+    void spawnProcess(entry, initialProfile, initialCwd || undefined);
 
     return () => {
-      cancelled.current = true;
       disposed = true;
       resizeObserver.disconnect();
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       // Detach xterm element but keep in registry for potential reattach
       if (xtermContainer.parentNode) {
         xtermContainer.parentNode.removeChild(xtermContainer);
@@ -661,14 +687,29 @@ export function TerminalPane({
         'group relative flex h-full flex-col overflow-hidden',
         isActive ? 'pane-active' : 'pane-inactive',
       )}
-      style={{ background: '#0a0a0f' }}
+      style={
+        {
+          background: '#0a0a0f',
+          '--pane-color': effectiveColor,
+        } as React.CSSProperties
+      }
       onMouseDown={onFocus}
       onContextMenu={handleContextMenu}
     >
-      {/* Compact pane header */}
+      {/* Color accent — left edge */}
+      <span
+        className="absolute top-0 left-0 z-10 h-full w-[2px]"
+        style={{
+          backgroundColor: effectiveColor,
+          opacity: isActive ? 0.7 : 0.15,
+          transition: 'opacity 150ms ease',
+        }}
+      />
+
+      {/* Pane header */}
       <div
         className={cn(
-          'pane-drag-handle flex h-7 shrink-0 items-center justify-between px-2',
+          'pane-drag-handle flex h-8 shrink-0 items-center justify-between gap-2 px-3 pl-3.5',
           'cursor-grab select-none active:cursor-grabbing',
           'border-b border-white/[0.06]',
           'transition-colors duration-100',
@@ -679,41 +720,29 @@ export function TerminalPane({
         title="Double-click to maximize"
       >
         <div className="flex min-w-0 items-center gap-2">
-          {/* Pane number badge */}
-          <span
-            className={cn(
-              'w-3.5 shrink-0 text-center font-mono text-[9px] font-bold transition-colors duration-100',
-              isActive ? 'text-zinc-400' : 'text-zinc-700',
+          {/* Profile color dot with status indicator */}
+          <span className="relative flex shrink-0 items-center justify-center">
+            <span
+              className="h-2 w-2 rounded-full transition-all duration-200"
+              style={{
+                backgroundColor: effectiveColor,
+                opacity: isActive ? 1 : 0.4,
+                boxShadow: isActive ? `0 0 6px ${effectiveColor}44` : 'none',
+              }}
+            />
+            {paneStatus !== 'working' && statusColor !== 'transparent' && (
+              <span
+                className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: statusColor }}
+              />
             )}
-          >
-            {paneIndex + 1}
           </span>
-
-          {/* Profile dot — always shows profile color */}
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full transition-all duration-200"
-            style={{
-              backgroundColor: effectiveColor,
-              opacity: isActive ? 1 : 0.35,
-              boxShadow: isActive ? `0 0 4px ${effectiveColor}66` : 'none',
-              outlineStyle:
-                paneStatus !== 'working' && statusColor !== 'transparent'
-                  ? 'solid'
-                  : 'none',
-              outlineWidth: '1.5px',
-              outlineOffset: '1.5px',
-              outlineColor:
-                paneStatus !== 'working' && statusColor !== 'transparent'
-                  ? statusColor
-                  : 'transparent',
-            }}
-          />
 
           {/* Profile name */}
           <span
             className={cn(
-              'truncate text-[10px] font-medium transition-colors duration-100',
-              isActive ? 'text-zinc-300' : 'text-zinc-600',
+              'truncate text-[11px] font-medium transition-colors duration-100',
+              isActive ? 'text-zinc-200' : 'text-zinc-500',
             )}
           >
             {activeProfile.name}
@@ -721,33 +750,72 @@ export function TerminalPane({
 
           {/* CWD breadcrumb */}
           {cwdLabel && (
-            <>
-              <span className="text-[9px] text-zinc-700/50">/</span>
+            <div
+              className={cn(
+                'flex items-center gap-1 rounded px-1.5 py-0.5',
+                isActive ? 'bg-white/[0.04]' : 'bg-transparent',
+              )}
+              title={cwd}
+            >
+              <FolderOpen
+                size={9}
+                className={cn(
+                  'shrink-0',
+                  isActive ? 'text-zinc-500' : 'text-zinc-700',
+                )}
+                strokeWidth={1.5}
+              />
               <span
-                className="max-w-[140px] truncate text-[9px] text-zinc-600"
-                title={cwd}
+                className={cn(
+                  'max-w-[180px] truncate text-[10px]',
+                  isActive ? 'text-zinc-400' : 'text-zinc-600',
+                )}
               >
                 {cwdLabel}
               </span>
-            </>
+            </div>
           )}
 
           {/* Maximized indicator */}
           {isMaximized && (
-            <span className="ml-1 rounded bg-white/[0.04] px-1 py-px text-[8px] font-medium text-zinc-600">
+            <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium text-zinc-500">
               ESC to restore
             </span>
           )}
         </div>
 
-        {/* Header actions — always visible when maximized, hover otherwise */}
-        <div
-          className={cn(
-            'flex shrink-0 items-center gap-0.5',
-            'transition-opacity duration-100',
-            isMaximized ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-          )}
-        >
+        {/* Header actions — always visible */}
+        <div className="flex shrink-0 items-center gap-0.5">
+          {/* Split buttons — visible on hover */}
+          <div
+            className={cn(
+              'flex items-center gap-0.5 transition-opacity duration-100',
+              'opacity-0 group-hover:opacity-100',
+            )}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                useWorkspaceStore.getState().addPane(activeProfile.id, 'right');
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+              title="Split Right (Ctrl+Shift+D)"
+            >
+              <PanelRight size={10} strokeWidth={1.5} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                useWorkspaceStore.getState().addPane(activeProfile.id, 'below');
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+              title="Split Below (Ctrl+Shift+E)"
+            >
+              <PanelBottom size={10} strokeWidth={1.5} />
+            </button>
+            <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
+          </div>
+
           {/* Maximize / Restore */}
           <button
             onClick={(e) => {
@@ -755,34 +823,34 @@ export function TerminalPane({
               toggleMaximize(paneId);
             }}
             className={cn(
-              'flex h-4 w-4 items-center justify-center rounded',
+              'flex h-5 w-5 items-center justify-center rounded',
               'transition-all duration-100',
               isMaximized
-                ? 'text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'
-                : 'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+                ? 'text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
+                : 'text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300',
             )}
             title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
           >
             {isMaximized ? (
-              <Minimize2 size={8} strokeWidth={2} />
+              <Minimize2 size={10} strokeWidth={2} />
             ) : (
-              <Maximize2 size={8} strokeWidth={2} />
+              <Maximize2 size={10} strokeWidth={2} />
             )}
           </button>
-          {/* Close */}
+          {/* Close — always visible */}
           <button
             onClick={(e) => {
               e.stopPropagation();
               onClose();
             }}
             className={cn(
-              'flex h-4 w-4 items-center justify-center rounded',
+              'flex h-5 w-5 items-center justify-center rounded',
               'transition-all duration-100',
-              'text-zinc-700 hover:bg-white/[0.06] hover:text-zinc-300',
+              'text-zinc-600 hover:bg-red-500/[0.1] hover:text-red-400',
             )}
-            title="Close pane (Ctrl+W)"
+            title="Close pane (Ctrl+Shift+W)"
           >
-            <X size={9} strokeWidth={2} />
+            <X size={10} strokeWidth={2} />
           </button>
         </div>
       </div>

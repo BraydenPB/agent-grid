@@ -6,17 +6,11 @@ import {
   createCustomProfile,
 } from './profiles';
 
-// Helper: extract the command string passed to bash -c or powershell -Command
+// Helper: extract the command string passed to bash -c
 function bashCmdString(profile: TerminalProfile): string {
   const { args } = resolveShellCommand(profile, 'linux');
   // args = ['-lc', '<command string>']
   return args[1]!;
-}
-
-function psCmdString(profile: TerminalProfile): string {
-  const { args } = resolveShellCommand(profile, 'windows');
-  // args = ['-NoLogo', '-Command', '& <command string>']
-  return args[2]!;
 }
 
 // ── __SYSTEM_SHELL__ sentinel ──
@@ -65,15 +59,25 @@ describe('resolveShellCommand — non-shell profiles', () => {
     expect(result.args[1]).toContain('claude');
   });
 
-  it('wraps in powershell -Command with & on windows', () => {
+  it('wraps in cmd.exe /C on windows', () => {
     const result = resolveShellCommand(claude, 'windows');
-    expect(result.command).toBe('powershell.exe');
-    expect(result.args[0]).toBe('-NoLogo');
-    expect(result.args[1]).toBe('-Command');
-    expect(result.args[2]).toMatch(/^& /);
+    expect(result.command).toBe('cmd.exe');
+    expect(result.args).toEqual(['/C', 'claude']);
   });
 
-  it('passes multiple args quoted individually', () => {
+  it('passes multiple args as a single escaped string on windows', () => {
+    const profile: TerminalProfile = {
+      id: 'test',
+      name: 'Test',
+      command: 'aider',
+      args: ['--model', 'gpt-4'],
+    };
+    const result = resolveShellCommand(profile, 'windows');
+    expect(result.command).toBe('cmd.exe');
+    expect(result.args).toEqual(['/C', 'aider --model gpt-4']);
+  });
+
+  it('passes multiple args quoted individually on linux', () => {
     const profile: TerminalProfile = {
       id: 'test',
       name: 'Test',
@@ -173,77 +177,63 @@ describe('bash quoting — injection prevention', () => {
   });
 });
 
-// ── PowerShell quoting ──
+// ── cmd.exe quoting (tested indirectly via resolveShellCommand) ──
 
-describe('powershell quoting — injection prevention', () => {
-  function quote(arg: string): string {
+describe('cmd.exe quoting — injection prevention', () => {
+  function winArgs(command: string, args: string[] = []): string {
     const profile: TerminalProfile = {
-      id: 'q',
-      name: 'q',
-      command: arg,
-      args: [],
+      id: 'w',
+      name: 'w',
+      command,
+      args,
     };
-    // Extract quoted string from "& 'quoted'"
-    const full = psCmdString(profile);
-    return full.replace(/^& /, '');
+    const result = resolveShellCommand(profile, 'windows');
+    // args = ['/C', '<command string>']
+    return result.args[1]!;
   }
 
-  it('handles simple strings', () => {
-    expect(quote('hello')).toBe("'hello'");
+  it('handles simple command without special chars', () => {
+    expect(winArgs('claude')).toBe('claude');
   });
 
-  it('escapes single quotes by doubling', () => {
-    expect(quote("it's")).toBe("'it''s'");
+  it('quotes command paths with spaces', () => {
+    expect(winArgs('C:\\Program Files\\tool.exe')).toBe(
+      '"C:\\Program Files\\tool.exe"',
+    );
   });
 
-  it('escapes multiple single quotes', () => {
-    expect(quote("a'b'c")).toBe("'a''b''c'");
+  it('quotes args containing ampersand', () => {
+    expect(winArgs('tool', ['--name', 'a&b'])).toBe('tool --name "a&b"');
   });
 
-  it('neutralizes $() substitution', () => {
-    expect(quote('$(Get-Process)')).toBe("'$(Get-Process)'");
+  it('quotes args containing pipe', () => {
+    expect(winArgs('tool', ['| echo bad'])).toBe('tool "| echo bad"');
   });
 
-  it('neutralizes semicolons', () => {
-    expect(quote('; Remove-Item -Recurse')).toBe("'; Remove-Item -Recurse'");
+  it('quotes args containing angle brackets', () => {
+    expect(winArgs('tool', ['> out.txt'])).toBe('tool "> out.txt"');
   });
 
-  it('handles empty string', () => {
-    expect(quote('')).toBe("''");
+  it('escapes percent signs to prevent variable expansion', () => {
+    expect(winArgs('tool', ['%PATH%'])).toBe('tool "%%PATH%%"');
   });
 
-  it('handles backtick (PS escape char)', () => {
-    expect(quote('`whoami`')).toBe("'`whoami`'");
+  it('escapes double quotes inside arguments', () => {
+    expect(winArgs('tool', ['"hello"'])).toBe('tool """hello"""');
   });
 
-  it('handles pipe', () => {
-    expect(quote('| Get-Content')).toBe("'| Get-Content'");
-  });
-});
-
-// ── PowerShell call operator ──
-
-describe('powershell call operator (&)', () => {
-  it('prepends & to the command string', () => {
-    const profile: TerminalProfile = {
-      id: 'test',
-      name: 'Test',
-      command: 'claude',
-      args: [],
-    };
-    const cmd = psCmdString(profile);
-    expect(cmd).toMatch(/^& 'claude'$/);
+  it('handles empty argument', () => {
+    expect(winArgs('tool', [''])).toBe('tool ""');
   });
 
-  it('prepends & with multiple args', () => {
-    const profile: TerminalProfile = {
-      id: 'test',
-      name: 'Test',
-      command: 'aider',
-      args: ['--model', 'gpt-4'],
-    };
-    const cmd = psCmdString(profile);
-    expect(cmd).toBe("& 'aider' '--model' 'gpt-4'");
+  it('handles mixed safe and unsafe args', () => {
+    expect(
+      winArgs('aider', ['--model', 'gpt-4', '--dir', 'C:\\My Projects']),
+    ).toBe('aider --model gpt-4 --dir "C:\\My Projects"');
+  });
+
+  it('neutralizes caret escape character', () => {
+    expect(winArgs('tool', ['^&rm'])).toBe('tool "^&rm"');
   });
 });
 

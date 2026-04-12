@@ -58,8 +58,12 @@ export class ErrorBoundary extends Component<Props, State> {
             }}
           >
             {this.state.error.message}
-            {'\n\n'}
-            {this.state.error.stack}
+            {import.meta.env.DEV && (
+              <>
+                {'\n\n'}
+                {this.state.error.stack}
+              </>
+            )}
           </pre>
           <div style={{ display: 'flex', gap: 8 }}>
             <button

@@ -141,6 +141,19 @@ describe('normalizeCwd — windows', () => {
     expect(normalizeCwd('/mnt/d/Projects', win)).toBe('D:\\Projects');
   });
 
+  // \\?\ extended-length prefix (from Rust canonicalize())
+  it('strips \\\\?\\ prefix from canonicalized paths', () => {
+    expect(normalizeCwd('\\\\?\\C:\\Users\\brayd\\Desktop', win)).toBe(
+      'C:\\Users\\brayd\\Desktop',
+    );
+  });
+
+  it('strips \\\\?\\ prefix with nested subdirectories', () => {
+    expect(
+      normalizeCwd('\\\\?\\C:\\Users\\brayd\\Desktop\\Projects\\my-app', win),
+    ).toBe('C:\\Users\\brayd\\Desktop\\Projects\\my-app');
+  });
+
   it('handles .. components (no resolution, just passthrough)', () => {
     // normalizeCwd doesn't resolve .., it just normalizes slashes
     const result = normalizeCwd('C:\\Users\\brayd\\..\\other', win);
