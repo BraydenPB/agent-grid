@@ -20,7 +20,7 @@ import '@xterm/xterm/css/xterm.css';
 import { spawnPty, getPlatform, type ShimPty } from '@/lib/tauri-shim';
 import { resolveShellCommand } from '@/lib/profiles';
 import { normalizeCwd } from '@/lib/cwd';
-import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 import {
   getTerminalEntry,
   setTerminalEntry,
@@ -105,7 +105,7 @@ export function TerminalPane({
   const [cwd, setCwd] = useState<string>(initialCwd || '');
   const profiles = useWorkspaceStore((s) => s.profiles);
   const paneProfileId = useWorkspaceStore((s) => {
-    const ws = getActiveWorkspace(s);
+    const ws = getActiveWorktree(s);
     return (
       ws?.panes.find((p) => p.id === paneId)?.profileId ?? initialProfile.id
     );
@@ -114,14 +114,14 @@ export function TerminalPane({
   const activeProfile =
     profiles.find((p) => p.id === paneProfileId) ?? initialProfile;
   const paneColorOverride = useWorkspaceStore((s) => {
-    const ws = getActiveWorkspace(s);
+    const ws = getActiveWorktree(s);
     return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
   });
   const effectiveColor = paneColorOverride ?? activeProfile.color ?? '#636d83';
 
   const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
   const isMaximized = useWorkspaceStore((s) => {
-    const ws = getActiveWorkspace(s);
+    const ws = getActiveWorktree(s);
     return ws?.maximizedPaneId === paneId;
   });
 
@@ -374,7 +374,7 @@ export function TerminalPane({
             const currentStatus =
               usePaneStatusStore.getState().statuses[paneId];
             const wsState = useWorkspaceStore.getState();
-            const activeWs = getActiveWorkspace(wsState);
+            const activeWs = getActiveWorktree(wsState);
             const isCurrentlyActive = activeWs?.activePaneId === paneId;
             if (!isCurrentlyActive && currentStatus !== 'attention') {
               setStatus(paneId, 'attention');

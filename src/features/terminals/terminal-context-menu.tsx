@@ -26,7 +26,7 @@ import {
 import { cn } from '@/lib/utils';
 import {
   useWorkspaceStore,
-  getActiveWorkspace,
+  getActiveWorktree,
   getActiveProject,
 } from '@/store/workspace-store';
 import type { TerminalProfile } from '@/types';
@@ -106,7 +106,7 @@ export function TerminalContextMenu({
   const profiles = useWorkspaceStore((s) => s.profiles);
   const updatePaneColor = useWorkspaceStore((s) => s.updatePaneColor);
   const paneColorOverride = useWorkspaceStore((s) => {
-    const ws = getActiveWorkspace(s);
+    const ws = getActiveWorktree(s);
     return ws?.panes.find((p) => p.id === paneId)?.colorOverride;
   });
   const currentProfile = profiles.find((p) => p.id === profileId) ??

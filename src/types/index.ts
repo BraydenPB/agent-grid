@@ -29,11 +29,12 @@ export interface Pane {
   };
 }
 
-export interface WorkspaceTab {
+export interface WorktreeTab {
   id: string;
+  projectId: string;
   name: string;
-  color?: string;
-  cwd?: string;
+  branch: string;
+  cwd: string;
   panes: Pane[];
   activePaneId: string | null;
   maximizedPaneId: string | null;
@@ -50,24 +51,9 @@ export interface Project {
   name: string;
   path: string;
   mainPaneId: string | null;
-  workspaceIds: string[];
-  activeWorkspaceId: string;
-  color?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProjectWorkspace {
-  id: string;
-  projectId: string;
-  name: string;
-  worktreePath?: string;
-  worktreeBranch?: string;
-  panes: Pane[];
-  activePaneId: string | null;
-  maximizedPaneId: string | null;
-  activePreset: string | null;
-  dockviewLayout: unknown;
+  defaultProfileId: string;
+  worktreeIds: string[];
+  activeWorktreeId: string;
   color?: string;
   createdAt: string;
   updatedAt: string;

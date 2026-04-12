@@ -19,7 +19,9 @@ export function WorktreeDialog({ onClose }: WorktreeDialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   const project = useWorkspaceStore(getActiveProject);
-  const addWorktreeWorkspace = useWorkspaceStore((s) => s.addWorktreeWorkspace);
+  const createWorktreeFromGit = useWorkspaceStore(
+    (s) => s.createWorktreeFromGit,
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 50);
@@ -59,12 +61,12 @@ export function WorktreeDialog({ onClose }: WorktreeDialogProps) {
 
     try {
       const absPath = await createWorktree(project.path, trimmed, worktreePath);
-      addWorktreeWorkspace(absPath, trimmed);
+      createWorktreeFromGit(absPath, trimmed);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  }, [branch, project, addWorktreeWorkspace]);
+  }, [branch, project, createWorktreeFromGit]);
 
   if (!project?.path) return null;
 

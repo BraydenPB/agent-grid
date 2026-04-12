@@ -1,9 +1,9 @@
-import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 
 export function AppBar() {
-  const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
-  const name = activeWorkspace?.name ?? 'Agent Grid';
-  const paneCount = activeWorkspace?.panes.length ?? 0;
+  const activeWorktree = useWorkspaceStore(getActiveWorktree);
+  const name = activeWorktree?.name ?? 'Agent Grid';
+  const paneCount = activeWorktree?.panes.length ?? 0;
 
   return (
     <header

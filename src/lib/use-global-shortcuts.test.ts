@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 import { useGlobalShortcuts } from './use-global-shortcuts';
 
 // Mock tauri-shim
@@ -16,9 +16,9 @@ vi.mock('@/lib/dockview-api', () => ({
 
 const shellId = 'system-shell';
 
-/** Get the active workspace's state */
-function ws() {
-  return getActiveWorkspace(useWorkspaceStore.getState());
+/** Get the active worktree's state */
+function wt() {
+  return getActiveWorktree(useWorkspaceStore.getState());
 }
 
 function resetStore() {
@@ -51,15 +51,29 @@ function setupHook() {
   return renderHook(() => useGlobalShortcuts());
 }
 
-// ── Ctrl+T — New shell terminal ──
+function enterLevel3() {
+  useWorkspaceStore.getState().addProject('Test', '/repo');
+  useWorkspaceStore.setState({ currentLevel: 3 });
+}
+
+// ── Ctrl+T — New shell terminal (level 3 only) ──
 
 describe('Ctrl+T — new terminal', () => {
-  it('adds a shell pane', () => {
+  it('adds a shell pane at level 3', () => {
     setupHook();
+    enterLevel3();
+    const before = wt()!.panes.length;
     fireKey('t', { ctrlKey: true });
-    const panes = ws()!.panes;
-    expect(panes).toHaveLength(1);
-    expect(panes[0]!.profileId).toBe(shellId);
+    expect(wt()!.panes).toHaveLength(before + 1);
+  });
+
+  it('does not add pane at level 2', () => {
+    setupHook();
+    useWorkspaceStore.getState().addProject('Test', '/repo');
+    useWorkspaceStore.setState({ currentLevel: 2 });
+    const before = wt()!.panes.length;
+    fireKey('t', { ctrlKey: true });
+    expect(wt()!.panes).toHaveLength(before);
   });
 });
 
@@ -69,16 +83,14 @@ describe('Ctrl+W — close pane', () => {
   it('removes the active pane', () => {
     setupHook();
     useWorkspaceStore.getState().addPane(shellId);
-    expect(ws()!.panes).toHaveLength(1);
-
+    const before = wt()!.panes.length;
     fireKey('w', { ctrlKey: true });
-    expect(ws()!.panes).toHaveLength(0);
+    expect(wt()!.panes).toHaveLength(before - 1);
   });
 
   it('does nothing when no panes exist', () => {
     setupHook();
     fireKey('w', { ctrlKey: true });
-    // Should not crash — no workspace exists
   });
 });
 
@@ -92,59 +104,34 @@ describe('Escape', () => {
     expect(useWorkspaceStore.getState().showCommandPalette).toBe(false);
   });
 
-  it('exits level 3 when command palette is closed', () => {
+  it('closes worktree dialog', () => {
     setupHook();
-    useWorkspaceStore.getState().addPane(shellId);
-    const paneId = ws()!.panes[0]!.id;
-    // Enter level 2 (expandPane)
-    useWorkspaceStore.getState().expandPane(paneId);
-    // Enter level 3
-    useWorkspaceStore.getState().enterLevel3(paneId);
-    expect(useWorkspaceStore.getState().level3PaneId).toBe(paneId);
-
+    useWorkspaceStore.getState().setShowWorktreeDialog(true);
     fireKey('Escape');
-    expect(useWorkspaceStore.getState().level3PaneId).toBeNull();
+    expect(useWorkspaceStore.getState().showWorktreeDialog).toBe(false);
   });
 
-  it('exits level 2 when level 3 is inactive', () => {
+  it('goes to dashboard from level 3', () => {
     setupHook();
-    useWorkspaceStore.getState().addPane(shellId);
-    const paneId = ws()!.panes[0]!.id;
-    useWorkspaceStore.getState().expandPane(paneId);
-    expect(useWorkspaceStore.getState().expandedPaneId).toBe(paneId);
-
+    enterLevel3();
+    expect(useWorkspaceStore.getState().currentLevel).toBe(3);
     fireKey('Escape');
-    expect(useWorkspaceStore.getState().expandedPaneId).toBeNull();
+    expect(useWorkspaceStore.getState().currentLevel).toBe(2);
   });
 
-  it('closes project browser when palette and expansion are inactive', () => {
+  it('goes to folder browser from level 2', () => {
+    setupHook();
+    useWorkspaceStore.getState().addProject('Test', '/repo');
+    useWorkspaceStore.setState({ currentLevel: 2 });
+    fireKey('Escape');
+    expect(useWorkspaceStore.getState().currentLevel).toBe(1);
+  });
+
+  it('closes project browser overlay', () => {
     setupHook();
     useWorkspaceStore.getState().setShowProjectBrowser(true);
     fireKey('Escape');
     expect(useWorkspaceStore.getState().showProjectBrowser).toBe(false);
-  });
-
-  it('does not navigate to Level 1 when at Level 2 with nothing else open', () => {
-    setupHook();
-    // Ensure we're at Level 2 with a project
-    useWorkspaceStore.getState().addPane(shellId);
-    expect(useWorkspaceStore.getState().currentLevel).toBe(2);
-
-    fireKey('Escape');
-    // Escape should NOT drop back to Level 1 — use breadcrumb for that
-    expect(useWorkspaceStore.getState().currentLevel).toBe(2);
-  });
-
-  it('does nothing at Level 1', () => {
-    setupHook();
-    // Go to Level 1
-    useWorkspaceStore.getState().addPane(shellId);
-    useWorkspaceStore.getState().goToLevel1();
-    expect(useWorkspaceStore.getState().currentLevel).toBe(1);
-
-    fireKey('Escape');
-    // Should remain at Level 1
-    expect(useWorkspaceStore.getState().currentLevel).toBe(1);
   });
 });
 
@@ -177,6 +164,17 @@ describe('Ctrl+K — project browser', () => {
   });
 });
 
+// ── Ctrl+N — open worktree dialog (level 3) ──
+
+describe('Ctrl+N — worktree dialog', () => {
+  it('opens worktree dialog at level 3', () => {
+    setupHook();
+    enterLevel3();
+    fireKey('n', { ctrlKey: true });
+    expect(useWorkspaceStore.getState().showWorktreeDialog).toBe(true);
+  });
+});
+
 // ── Pane focus navigation ──
 
 describe('Ctrl+Tab / Ctrl+Shift+Tab — focus cycling', () => {
@@ -185,12 +183,11 @@ describe('Ctrl+Tab / Ctrl+Shift+Tab — focus cycling', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
     addPane(shellId);
-    const panes = ws()!.panes;
-    // Active is second pane (last added)
-    expect(ws()!.activePaneId).toBe(panes[1]!.id);
+    const panes = wt()!.panes;
+    expect(wt()!.activePaneId).toBe(panes[1]!.id);
 
     fireKey('Tab', { ctrlKey: true });
-    expect(ws()!.activePaneId).toBe(panes[0]!.id);
+    expect(wt()!.activePaneId).toBe(panes[0]!.id);
   });
 
   it('Ctrl+Shift+Tab focuses previous pane', () => {
@@ -198,12 +195,11 @@ describe('Ctrl+Tab / Ctrl+Shift+Tab — focus cycling', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
     addPane(shellId);
-    const panes = ws()!.panes;
-    // Set active to first pane
+    const panes = wt()!.panes;
     useWorkspaceStore.getState().setActivePaneId(panes[0]!.id);
 
     fireKey('Tab', { ctrlKey: true, shiftKey: true });
-    expect(ws()!.activePaneId).toBe(panes[1]!.id);
+    expect(wt()!.activePaneId).toBe(panes[1]!.id);
   });
 });
 
@@ -216,11 +212,10 @@ describe('Alt+1–9 — focus by index', () => {
     addPane(shellId);
     addPane(shellId);
     addPane(shellId);
-    const panes = ws()!.panes;
-    // Active is third (last added)
+    const panes = wt()!.panes;
 
     fireKey('1', { altKey: true });
-    expect(ws()!.activePaneId).toBe(panes[0]!.id);
+    expect(wt()!.activePaneId).toBe(panes[0]!.id);
   });
 
   it('Alt+2 focuses second pane', () => {
@@ -228,29 +223,31 @@ describe('Alt+1–9 — focus by index', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
     addPane(shellId);
-    const panes = ws()!.panes;
+    const panes = wt()!.panes;
 
     fireKey('2', { altKey: true });
-    expect(ws()!.activePaneId).toBe(panes[1]!.id);
+    expect(wt()!.activePaneId).toBe(panes[1]!.id);
   });
 });
 
-// ── Ctrl+Enter — Maximize ──
+// ── Ctrl+Enter — Maximize (level 3) ──
 
-describe('Ctrl+Enter — expand toggle', () => {
-  it('expands the active pane', () => {
+describe('Ctrl+Enter — maximize toggle', () => {
+  it('toggles maximize on active pane at level 3', () => {
     setupHook();
+    useWorkspaceStore.getState().addProject('Test', '/repo');
     useWorkspaceStore.getState().addPane(shellId);
-    const paneId = ws()!.panes[0]!.id;
+    useWorkspaceStore.setState({ currentLevel: 3 });
+    const paneId = wt()!.activePaneId;
 
     fireKey('Enter', { ctrlKey: true });
-    expect(useWorkspaceStore.getState().expandedPaneId).toBe(paneId);
+    expect(wt()!.maximizedPaneId).toBe(paneId);
   });
 
   it('does nothing when no active pane', () => {
     setupHook();
     fireKey('Enter', { ctrlKey: true });
-    expect(useWorkspaceStore.getState().expandedPaneId).toBeNull();
+    // No worktree, should not crash
   });
 });
 
@@ -259,13 +256,11 @@ describe('Ctrl+Enter — expand toggle', () => {
 describe('hook cleanup', () => {
   it('removes event listener on unmount', () => {
     const { unmount } = setupHook();
+    useWorkspaceStore.getState().addProject('Test', '/repo');
+    useWorkspaceStore.setState({ currentLevel: 3 });
     unmount();
-    // Fire shortcut after unmount — should have no effect
-    useWorkspaceStore.getState().addPane(shellId);
-    const countBefore = ws()!.panes.length;
+    const countBefore = wt()!.panes.length;
     fireKey('t', { ctrlKey: true });
-    // Count shouldn't change because the hook is unmounted
-    // (but a new project+workspace was created by the first addPane above)
-    expect(ws()!.panes).toHaveLength(countBefore);
+    expect(wt()!.panes).toHaveLength(countBefore);
   });
 });

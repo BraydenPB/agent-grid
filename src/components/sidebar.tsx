@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { PanelRight, PanelBottom, Bookmark, X } from 'lucide-react';
-import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 import { cn } from '@/lib/utils';
 
@@ -9,13 +9,13 @@ export function Sidebar() {
   const addPane = useWorkspaceStore((s) => s.addPane);
   const applyPreset = useWorkspaceStore((s) => s.applyPreset);
   const clearAllPanes = useWorkspaceStore((s) => s.clearAllPanes);
-  const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
-  const activePreset = activeWorkspace?.activePreset ?? null;
+  const activeWorktree = useWorkspaceStore(getActiveWorktree);
+  const activePreset = activeWorktree?.activePreset ?? null;
   const customLayouts = useWorkspaceStore((s) => s.customLayouts);
   const saveCustomLayout = useWorkspaceStore((s) => s.saveCustomLayout);
   const deleteCustomLayout = useWorkspaceStore((s) => s.deleteCustomLayout);
   const applyCustomLayout = useWorkspaceStore((s) => s.applyCustomLayout);
-  const hasPanes = (activeWorkspace?.panes.length ?? 0) > 0;
+  const hasPanes = (activeWorktree?.panes.length ?? 0) > 0;
   const [splitDirection, setSplitDirection] = useState<'right' | 'below'>(
     'right',
   );

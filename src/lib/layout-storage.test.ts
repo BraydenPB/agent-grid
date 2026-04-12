@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { Pane, Project, ProjectWorkspace } from '@/types';
+import type { Pane, Project, WorktreeTab } from '@/types';
 import {
   saveLayout,
   loadLayout,
@@ -23,13 +23,15 @@ function makePanes(count: number): Pane[] {
   }));
 }
 
-function makeProjectAndWorkspace(panes: Pane[]) {
-  const wsId = 'ws-1';
+function makeProjectAndWorktree(panes: Pane[]) {
+  const wtId = 'wt-1';
   const projectId = 'project-1';
-  const workspace: ProjectWorkspace = {
-    id: wsId,
+  const worktree: WorktreeTab = {
+    id: wtId,
     projectId,
-    name: 'Default',
+    name: 'main',
+    branch: 'main',
+    cwd: '',
     panes,
     activePaneId: panes[0]?.id ?? null,
     maximizedPaneId: null,
@@ -43,15 +45,20 @@ function makeProjectAndWorkspace(panes: Pane[]) {
     name: 'Default',
     path: '',
     mainPaneId: panes[0]?.id ?? null,
-    workspaceIds: [wsId],
-    activeWorkspaceId: wsId,
+    defaultProfileId: 'system-shell',
+    worktreeIds: [wtId],
+    activeWorktreeId: wtId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
   return {
     projects: [project],
-    workspaces: { [wsId]: workspace },
+    worktrees: { [wtId]: worktree },
+    openProjectIds: [projectId],
     activeProjectId: projectId,
+    currentLevel: 2 as const,
+    dashboardLayout: null,
+    rootFolderPath: null,
   };
 }
 
@@ -62,18 +69,17 @@ beforeEach(() => {
 // ── saveLayout + loadLayout round-trip ──
 
 describe('saveLayout / loadLayout', () => {
-  it('round-trips valid V3 layout data', () => {
+  it('round-trips valid V4 layout data', () => {
     const panes = makePanes(2);
-    const { projects, workspaces, activeProjectId } =
-      makeProjectAndWorkspace(panes);
-    saveLayout(projects, workspaces, activeProjectId);
+    const state = makeProjectAndWorktree(panes);
+    saveLayout(state);
 
     const loaded = loadLayout();
     expect(loaded).not.toBeNull();
-    expect(loaded!.version).toBe(3);
+    expect(loaded!.version).toBe(4);
     expect(loaded!.projects).toHaveLength(1);
-    const ws = loaded!.workspaces[loaded!.projects[0]!.activeWorkspaceId];
-    expect(ws!.panes).toEqual(panes);
+    const wt = loaded!.worktrees[loaded!.projects[0]!.activeWorktreeId];
+    expect(wt!.panes).toEqual(panes);
     expect(loaded!.savedAt).toBeTruthy();
   });
 
@@ -82,10 +88,8 @@ describe('saveLayout / loadLayout', () => {
   });
 
   it('saves a timestamp', () => {
-    const { projects, workspaces, activeProjectId } = makeProjectAndWorkspace(
-      makePanes(1),
-    );
-    saveLayout(projects, workspaces, activeProjectId);
+    const state = makeProjectAndWorktree(makePanes(1));
+    saveLayout(state);
     const loaded = loadLayout();
     expect(loaded!.savedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
@@ -94,7 +98,7 @@ describe('saveLayout / loadLayout', () => {
 // ── V1 migration ──
 
 describe('loadLayout — V1 migration', () => {
-  it('migrates V1 format to V3', () => {
+  it('migrates V1 format to V4', () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -107,19 +111,19 @@ describe('loadLayout — V1 migration', () => {
     );
     const loaded = loadLayout();
     expect(loaded).not.toBeNull();
-    expect(loaded!.version).toBe(3);
+    expect(loaded!.version).toBe(4);
     expect(loaded!.projects).toHaveLength(1);
-    const wsId = loaded!.projects[0]!.activeWorkspaceId;
-    const ws = loaded!.workspaces[wsId];
-    expect(ws!.panes).toHaveLength(2);
-    expect(ws!.activePaneId).toBe('pane-0');
+    const wtId = loaded!.projects[0]!.activeWorktreeId;
+    const wt = loaded!.worktrees[wtId];
+    expect(wt!.panes).toHaveLength(2);
+    expect(wt!.activePaneId).toBe('pane-0');
   });
 });
 
 // ── V2 migration ──
 
 describe('loadLayout — V2 migration', () => {
-  it('migrates V2 format to V3', () => {
+  it('migrates V2 format to V4', () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -143,11 +147,84 @@ describe('loadLayout — V2 migration', () => {
     );
     const loaded = loadLayout();
     expect(loaded).not.toBeNull();
-    expect(loaded!.version).toBe(3);
+    expect(loaded!.version).toBe(4);
     expect(loaded!.projects).toHaveLength(1);
-    const ws = loaded!.workspaces['ws-old'];
-    expect(ws!.panes).toHaveLength(3);
-    expect(ws!.activePaneId).toBe('pane-1');
+    const wt = loaded!.worktrees['ws-old'];
+    expect(wt!.panes).toHaveLength(3);
+    expect(wt!.activePaneId).toBe('pane-1');
+  });
+});
+
+// ── V3 migration ──
+
+describe('loadLayout — V3 migration', () => {
+  it('migrates V3 parent+child worktree projects to single project with worktree tabs', () => {
+    const panes = makePanes(2);
+    const v3 = {
+      version: 3,
+      projects: [
+        {
+          id: 'parent',
+          name: 'Parent',
+          path: '/repo',
+          mainPaneId: 'pane-0',
+          workspaceIds: ['ws-parent'],
+          activeWorkspaceId: 'ws-parent',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'child',
+          name: 'feat/branch',
+          path: '/repo-wt',
+          mainPaneId: null,
+          workspaceIds: ['ws-child'],
+          activeWorkspaceId: 'ws-child',
+          parentProjectId: 'parent',
+          worktreeBranch: 'feat/branch',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      workspaces: {
+        'ws-parent': {
+          id: 'ws-parent',
+          projectId: 'parent',
+          name: 'Default',
+          panes: [panes[0]!],
+          activePaneId: 'pane-0',
+          maximizedPaneId: null,
+          activePreset: null,
+          dockviewLayout: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        'ws-child': {
+          id: 'ws-child',
+          projectId: 'child',
+          name: 'Default',
+          panes: [panes[1]!],
+          activePaneId: 'pane-1',
+          maximizedPaneId: null,
+          activePreset: null,
+          dockviewLayout: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      activeProjectId: 'parent',
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(v3));
+
+    const loaded = loadLayout();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.version).toBe(4);
+    // Child project should be merged into parent as a worktree tab
+    expect(loaded!.projects).toHaveLength(1);
+    expect(loaded!.projects[0]!.id).toBe('parent');
+    expect(loaded!.projects[0]!.worktreeIds).toHaveLength(2);
+    expect(Object.keys(loaded!.worktrees)).toHaveLength(2);
   });
 });
 
@@ -174,10 +251,8 @@ describe('loadLayout — invalid data', () => {
 
 describe('clearSavedLayout', () => {
   it('removes saved layout', () => {
-    const { projects, workspaces, activeProjectId } = makeProjectAndWorkspace(
-      makePanes(1),
-    );
-    saveLayout(projects, workspaces, activeProjectId);
+    const state = makeProjectAndWorktree(makePanes(1));
+    saveLayout(state);
     expect(loadLayout()).not.toBeNull();
     clearSavedLayout();
     expect(loadLayout()).toBeNull();

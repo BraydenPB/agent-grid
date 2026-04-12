@@ -1,11 +1,5 @@
 import { create } from 'zustand';
-import type {
-  Pane,
-  Project,
-  ProjectWorkspace,
-  WorkspaceTab,
-  TerminalProfile,
-} from '@/types';
+import type { Pane, Project, WorktreeTab, TerminalProfile } from '@/types';
 import { DEFAULT_PROFILES } from '@/lib/profiles';
 import { GRID_PRESETS } from '@/lib/grid-presets';
 import { generateId } from '@/lib/utils';
@@ -38,24 +32,26 @@ function createPane(profileId: string): Pane {
   return { id: generateId(), profileId, title: profile.name };
 }
 
-function createProjectWorkspace(
+function createWorktreeTab(
   projectId: string,
   name: string,
-  cwd?: string,
+  branch: string,
+  cwd: string,
   initialPaneProfileId?: string,
-): ProjectWorkspace {
+): WorktreeTab {
   const now = new Date().toISOString();
   const panes: Pane[] = [];
   if (initialPaneProfileId) {
     const pane = createPane(initialPaneProfileId);
-    if (cwd) pane.cwd = cwd;
+    pane.cwd = cwd;
     panes.push(pane);
   }
   return {
     id: generateId(),
     projectId,
     name,
-    worktreePath: cwd,
+    branch,
+    cwd,
     panes,
     activePaneId: panes[0]?.id ?? null,
     maximizedPaneId: null,
@@ -73,45 +69,25 @@ function createProject(name: string, path: string): Project {
     name,
     path,
     mainPaneId: null,
-    workspaceIds: [],
-    activeWorkspaceId: '',
+    defaultProfileId: 'system-shell',
+    worktreeIds: [],
+    activeWorktreeId: '',
     createdAt: now,
     updatedAt: now,
   };
 }
 
 /**
- * When switching away from a workspace, capture the correct outgoing layout
- * and reset all expansion state. If the user is in level 2/3, the live
- * Dockview JSON is a truncated subset — use the saved pre-expand layout instead.
+ * Capture the current Dockview layout JSON.
+ * Call before any level/worktree transition that unmounts the grid.
  */
-function collapseAndCaptureOutgoing(state: WorkspaceState): {
-  dockviewLayout: unknown;
-  expansionReset: Partial<WorkspaceState>;
-} {
-  let dockviewLayout: unknown = null;
-  if (state.expandedPaneId && state.preExpandLayout) {
-    // Currently expanded — the live grid only shows a subset; use saved layout
-    dockviewLayout = state.preExpandLayout;
-  } else {
-    try {
-      if (dockviewApiRef.current)
-        dockviewLayout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
+function captureOutgoingLayout(): unknown {
+  try {
+    if (dockviewApiRef.current) return dockviewApiRef.current.toJSON();
+  } catch {
+    /* ignore */
   }
-  return {
-    dockviewLayout,
-    expansionReset: {
-      expandedPaneId: null,
-      level2PaneIds: [],
-      preExpandLayout: null,
-      level2Layout: null,
-      level3PaneId: null,
-      preLevel3Layout: null,
-    },
-  };
+  return null;
 }
 
 /**
@@ -122,40 +98,40 @@ export function getActiveProject(state: WorkspaceState): Project | undefined {
   return state.projects.find((p) => p.id === state.activeProjectId);
 }
 
-/** Get the active workspace from state (navigates through active project) */
-function getActive(state: WorkspaceState): ProjectWorkspace | undefined {
+/** Get the active worktree from state (navigates through active project) */
+function getActive(state: WorkspaceState): WorktreeTab | undefined {
   const project = getActiveProject(state);
   if (!project) return undefined;
-  return state.workspaces[project.activeWorkspaceId];
+  return state.worktrees[project.activeWorktreeId];
 }
 
-/** Immutably update the active workspace in the flat map */
+/** Immutably update the active worktree in the flat map */
 function updateActive(
   state: WorkspaceState,
-  updater: (ws: ProjectWorkspace) => Partial<ProjectWorkspace>,
+  updater: (wt: WorktreeTab) => Partial<WorktreeTab>,
 ): Partial<WorkspaceState> {
-  const ws = getActive(state);
-  if (!ws) return {};
-  const updates = updater(ws);
+  const wt = getActive(state);
+  if (!wt) return {};
+  const updates = updater(wt);
   return {
-    workspaces: {
-      ...state.workspaces,
-      [ws.id]: { ...ws, ...updates, updatedAt: new Date().toISOString() },
+    worktrees: {
+      ...state.worktrees,
+      [wt.id]: { ...wt, ...updates, updatedAt: new Date().toISOString() },
     },
   };
 }
 
-/** Immutably update a specific workspace by ID in the flat map */
-function updateWorkspaceById(
-  workspaces: Record<string, ProjectWorkspace>,
-  wsId: string,
-  updates: Partial<ProjectWorkspace>,
-): Record<string, ProjectWorkspace> {
-  const ws = workspaces[wsId];
-  if (!ws) return workspaces;
+/** Immutably update a specific worktree by ID in the flat map */
+function updateWorktreeById(
+  worktrees: Record<string, WorktreeTab>,
+  wtId: string,
+  updates: Partial<WorktreeTab>,
+): Record<string, WorktreeTab> {
+  const wt = worktrees[wtId];
+  if (!wt) return worktrees;
   return {
-    ...workspaces,
-    [wsId]: { ...ws, ...updates, updatedAt: new Date().toISOString() },
+    ...worktrees,
+    [wtId]: { ...wt, ...updates, updatedAt: new Date().toISOString() },
   };
 }
 
@@ -172,109 +148,115 @@ function updateProject(
   );
 }
 
-/* ── Exported compat helpers ── */
+/* ── Exported selectors ── */
 
 /**
- * Get the active workspace for the active project.
- * Use in component selectors: `useWorkspaceStore(getActiveWorkspace)`
+ * Get the active worktree for the active project.
+ * Use in component selectors: `useWorkspaceStore(getActiveWorktree)`
  */
-export function getActiveWorkspace(
+export function getActiveWorktree(
   state: WorkspaceState,
-): ProjectWorkspace | undefined {
+): WorktreeTab | undefined {
   return getActive(state);
 }
 
 /**
- * Get all workspaces for the active project as an ordered array.
- * Use in tab-strip and other components that list workspace tabs.
+ * Get all worktree tabs for the active project as an ordered array.
+ * Use in tab-strip and other components that list worktree tabs.
  */
-export function getProjectWorkspaceList(
-  state: WorkspaceState,
-): ProjectWorkspace[] {
+export function getProjectWorktreeList(state: WorkspaceState): WorktreeTab[] {
   const project = getActiveProject(state);
   if (!project) return [];
-  return project.workspaceIds
-    .map((id) => state.workspaces[id])
-    .filter(Boolean) as ProjectWorkspace[];
+  return project.worktreeIds
+    .map((id) => state.worktrees[id])
+    .filter(Boolean) as WorktreeTab[];
 }
 
 /**
- * Get ALL pane IDs across all workspaces (for orphan cleanup).
+ * Get ALL pane IDs across all worktrees (for orphan cleanup).
  */
 export function getAllPaneIds(state: WorkspaceState): string[] {
-  return Object.values(state.workspaces).flatMap((w) =>
+  return Object.values(state.worktrees).flatMap((w) =>
     w.panes.map((p) => p.id),
   );
 }
 
 /**
- * Get the active workspace ID (for compat with consumers that
- * previously used state.activeWorkspaceId directly).
+ * Get the active worktree ID (for compat with consumers that
+ * need the active worktree ID directly).
  */
-export function getActiveWorkspaceId(
-  state: WorkspaceState,
-): string | undefined {
+export function getActiveWorktreeId(state: WorkspaceState): string | undefined {
   const project = getActiveProject(state);
-  return project?.activeWorkspaceId;
+  return project?.activeWorktreeId;
+}
+
+/**
+ * Get all projects that are currently open on the dashboard.
+ */
+export function getOpenProjects(state: WorkspaceState): Project[] {
+  return state.openProjectIds
+    .map((id) => state.projects.find((p) => p.id === id))
+    .filter(Boolean) as Project[];
+}
+
+/**
+ * Get the main pane for each open project (one per project, for dashboard).
+ */
+export function getDashboardPanes(state: WorkspaceState): Pane[] {
+  return getOpenProjects(state)
+    .map((project) => {
+      if (!project.mainPaneId) return undefined;
+      const wt = state.worktrees[project.activeWorktreeId];
+      return wt?.panes.find((p) => p.id === project.mainPaneId);
+    })
+    .filter(Boolean) as Pane[];
 }
 
 /* ── State interface ── */
 
 export interface WorkspaceState {
-  // Level 1 — Projects
+  // Level system
   projects: Project[];
   activeProjectId: string | null;
   currentLevel: 1 | 2 | 3;
 
-  // Flat workspace map (keyed by workspace ID)
-  workspaces: Record<string, ProjectWorkspace>;
+  // Dashboard (level 2)
+  openProjectIds: string[];
+  dashboardLayout: unknown;
+
+  // Flat worktree map (keyed by worktree ID)
+  worktrees: Record<string, WorktreeTab>;
 
   // Profiles & UI
   profiles: TerminalProfile[];
   layoutVersion: number;
   projectsPath: string;
+  rootFolderPath: string | null;
   showProjectBrowser: boolean;
   changeDirPaneId: string | null;
   pendingCwd: { paneId: string; path: string } | null;
   showCommandPalette: boolean;
   customLayouts: NamedLayout[];
 
-  /** Level 2 — pane ID that's currently expanded full-screen */
-  expandedPaneId: string | null;
-  /** Pane IDs created while in level 2 (removed on collapse) */
-  level2PaneIds: string[];
-  /** Dockview layout saved before entering level 2 */
-  preExpandLayout: unknown;
-  /** Dockview layout saved from level 2 (for re-expansion) */
-  level2Layout: unknown;
-  /** Level 3 — single pane maximized within level 2 (no splits allowed) */
-  level3PaneId: string | null;
-  /** Dockview layout saved before entering level 3 */
-  preLevel3Layout: unknown;
-
   // Project actions
   addProject: (name: string, path: string) => string;
   removeProject: (id: string) => void;
-  setActiveProject: (id: string) => void;
-  goToLevel1: () => void;
+  openProject: (id: string) => void;
+  closeProject: (id: string) => void;
+  focusProject: (id: string) => void;
+  goToFolderBrowser: () => void;
+  goToDashboard: () => void;
   setMainPane: (paneId: string) => void;
 
-  // Workspace tab actions (scoped to active project)
-  addWorkspace: (name: string, cwd?: string, profileId?: string) => string;
-  removeWorkspace: (id: string) => void;
-  setActiveWorkspace: (id: string) => void;
-  renameWorkspaceTab: (id: string, name: string) => void;
-  nextWorkspace: () => void;
-  prevWorkspace: () => void;
+  // Worktree tab actions (scoped to active project)
+  addWorktreeTab: (branch: string, cwd: string, profileId?: string) => string;
+  removeWorktreeTab: (id: string) => void;
+  setActiveWorktree: (id: string) => void;
+  renameWorktreeTab: (id: string, name: string) => void;
+  nextWorktree: () => void;
+  prevWorktree: () => void;
 
-  // Level 2 — expand a single pane full-screen
-  expandPane: (paneId: string) => void;
-  collapsePane: () => void;
-  // Level 3 — maximize one terminal within level 2
-  enterLevel3: (paneId: string) => void;
-  exitLevel3: () => void;
-
-  // Pane actions (scoped to active workspace)
+  // Pane actions (scoped to active worktree)
   setActivePaneId: (id: string | null) => void;
   addPane: (profileId: string, direction?: 'right' | 'below') => void;
   addPaneWithCwd: (
@@ -298,16 +280,17 @@ export interface WorkspaceState {
   addProfile: (profile: TerminalProfile) => void;
   updateProfileColor: (profileId: string, color: string) => void;
 
-  // Worktree
+  // Worktree creation (git worktree + new tab)
   showWorktreeDialog: boolean;
   setShowWorktreeDialog: (show: boolean) => void;
-  addWorktreeWorkspace: (
+  createWorktreeFromGit: (
     worktreePath: string,
     worktreeBranch: string,
   ) => string;
 
   // UI actions
   setProjectsPath: (path: string) => void;
+  setRootFolderPath: (path: string) => void;
   setShowProjectBrowser: (show: boolean) => void;
   setChangeDirPaneId: (paneId: string | null) => void;
   setPendingCwd: (paneId: string, path: string) => void;
@@ -327,14 +310,10 @@ export interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   projects: [],
   activeProjectId: null,
-  currentLevel: (cachedStartupLayout ? 2 : 1) as 1 | 2 | 3, // Level 2 if saved layout exists, else Level 1
-  workspaces: {},
-  expandedPaneId: null,
-  level2PaneIds: [],
-  preExpandLayout: null,
-  level2Layout: null,
-  level3PaneId: null,
-  preLevel3Layout: null,
+  currentLevel: (cachedStartupLayout ? 2 : 1) as 1 | 2 | 3,
+  openProjectIds: [],
+  dashboardLayout: null,
+  worktrees: {},
   profiles: (() => {
     const saved = loadProfileColors();
     return DEFAULT_PROFILES.map((p) => ({
@@ -344,6 +323,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   })(),
   layoutVersion: 0,
   projectsPath: '',
+  rootFolderPath: null,
   showProjectBrowser: false,
   changeDirPaneId: null,
   pendingCwd: null,
@@ -355,17 +335,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   addProject: (name, path) => {
     const project = createProject(name, path);
-    const ws = createProjectWorkspace(project.id, 'Default', path);
-    project.workspaceIds = [ws.id];
-    project.activeWorkspaceId = ws.id;
+    const wt = createWorktreeTab(
+      project.id,
+      'main',
+      'main',
+      path,
+      project.defaultProfileId,
+    );
+    project.worktreeIds = [wt.id];
+    project.activeWorktreeId = wt.id;
+    project.mainPaneId = wt.panes[0]?.id ?? null;
 
     set((s) => ({
       projects: [...s.projects, project],
-      workspaces: { ...s.workspaces, [ws.id]: ws },
+      worktrees: { ...s.worktrees, [wt.id]: wt },
+      openProjectIds: [...s.openProjectIds, project.id],
       activeProjectId: project.id,
       currentLevel: 2,
+      dashboardLayout: null,
       layoutVersion: s.layoutVersion + 1,
     }));
+
+    // Flush to localStorage — new project should persist
+    saveLayout(get());
 
     return project.id;
   },
@@ -375,101 +367,245 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const project = state.projects.find((p) => p.id === id);
     if (!project) return;
 
-    // Destroy all terminal entries for all workspaces in this project
-    for (const wsId of project.workspaceIds) {
-      const ws = state.workspaces[wsId];
-      if (ws) {
-        for (const pane of ws.panes) {
+    // Destroy all terminal entries for all worktrees in this project
+    for (const wtId of project.worktreeIds) {
+      const wt = state.worktrees[wtId];
+      if (wt) {
+        for (const pane of wt.panes) {
           destroyTerminalEntry(pane.id);
         }
       }
     }
 
-    // Remove workspaces from flat map
-    const nextWorkspaces = { ...state.workspaces };
-    for (const wsId of project.workspaceIds) {
-      delete nextWorkspaces[wsId];
+    // Remove worktrees from flat map
+    const nextWorktrees = { ...state.worktrees };
+    for (const wtId of project.worktreeIds) {
+      delete nextWorktrees[wtId];
     }
 
     const remaining = state.projects.filter((p) => p.id !== id);
-    const idx = state.projects.findIndex((p) => p.id === id);
+    const nextOpenIds = state.openProjectIds.filter((pid) => pid !== id);
+
     let nextActiveId = state.activeProjectId;
     if (nextActiveId === id) {
-      nextActiveId = remaining[Math.min(idx, remaining.length - 1)]?.id ?? null;
+      nextActiveId = nextOpenIds[0] ?? null;
     }
 
     set((s) => ({
       projects: remaining,
-      workspaces: nextWorkspaces,
+      worktrees: nextWorktrees,
+      openProjectIds: nextOpenIds,
       activeProjectId: nextActiveId,
-      currentLevel: nextActiveId ? s.currentLevel : 1,
-      expandedPaneId: null,
-      level2PaneIds: [],
-      preExpandLayout: null,
-      level2Layout: null,
-      level3PaneId: null,
-      preLevel3Layout: null,
+      currentLevel: nextOpenIds.length > 0 ? s.currentLevel : 1,
+      dashboardLayout: null,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+
+    // Flush to localStorage — project deletion should persist
+    saveLayout(get());
+  },
+
+  openProject: (id) => {
+    const state = get();
+    if (state.openProjectIds.includes(id)) {
+      // Already open — go to dashboard
+      set({ currentLevel: 2 });
+      return;
+    }
+
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return;
+
+    // Ensure project has a main worktree tab with at least one pane
+    let worktrees = state.worktrees;
+    let projects = state.projects;
+    if (project.worktreeIds.length === 0) {
+      const wt = createWorktreeTab(
+        project.id,
+        'main',
+        'main',
+        project.path,
+        project.defaultProfileId,
+      );
+      worktrees = { ...worktrees, [wt.id]: wt };
+      const updated = {
+        ...project,
+        worktreeIds: [wt.id],
+        activeWorktreeId: wt.id,
+        mainPaneId: wt.panes[0]?.id ?? null,
+        updatedAt: new Date().toISOString(),
+      };
+      projects = projects.map((p) => (p.id === id ? updated : p));
+    } else {
+      // Ensure mainPaneId exists
+      const activeWt = worktrees[project.activeWorktreeId];
+      if (!project.mainPaneId && activeWt && activeWt.panes.length > 0) {
+        projects = updateProject(projects, id, {
+          mainPaneId: activeWt.panes[0]!.id,
+        });
+      } else if (!project.mainPaneId && activeWt) {
+        // No panes — create one
+        const pane = createPane(project.defaultProfileId);
+        pane.cwd = activeWt.cwd;
+        const updatedWt = {
+          ...activeWt,
+          panes: [...activeWt.panes, pane],
+          activePaneId: pane.id,
+          updatedAt: new Date().toISOString(),
+        };
+        worktrees = { ...worktrees, [activeWt.id]: updatedWt };
+        projects = updateProject(projects, id, { mainPaneId: pane.id });
+      }
+    }
+
+    set((s) => ({
+      projects,
+      worktrees,
+      openProjectIds: [...s.openProjectIds, id],
+      currentLevel: 2,
+      dashboardLayout: null,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+
+    // Flush to localStorage — openProjectIds changed
+    saveLayout(get());
+  },
+
+  closeProject: (id) => {
+    const state = get();
+    if (!state.openProjectIds.includes(id)) return;
+
+    // Destroy all terminal entries for this project
+    const project = state.projects.find((p) => p.id === id);
+    if (project) {
+      for (const wtId of project.worktreeIds) {
+        const wt = state.worktrees[wtId];
+        if (wt) {
+          for (const pane of wt.panes) {
+            destroyTerminalEntry(pane.id);
+            usePaneStatusStore.getState().removeStatus(pane.id);
+          }
+        }
+      }
+    }
+
+    const nextOpenIds = state.openProjectIds.filter((pid) => pid !== id);
+    let nextActiveId = state.activeProjectId;
+    const closedActive = nextActiveId === id;
+    if (closedActive) {
+      nextActiveId = nextOpenIds[0] ?? null;
+    }
+
+    // Preserve currentLevel when closing a non-active project.
+    // If closing active project at level 3, drop to dashboard.
+    // If no projects remain, drop to folder browser.
+    let nextLevel = state.currentLevel;
+    if (nextOpenIds.length === 0) {
+      nextLevel = 1;
+    } else if (closedActive && state.currentLevel === 3) {
+      nextLevel = 2;
+    }
+
+    set((s) => ({
+      openProjectIds: nextOpenIds,
+      activeProjectId: nextActiveId,
+      currentLevel: nextLevel,
+      dashboardLayout: null,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+
+    // Flush to localStorage — terminals destroyed, state change should persist
+    const s = get();
+    saveLayout(s);
+  },
+
+  focusProject: (id) => {
+    const state = get();
+    if (state.activeProjectId === id && state.currentLevel === 3) return;
+
+    // Capture outgoing layout (dashboard or previous focused project's worktree)
+    const dockviewLayout = captureOutgoingLayout();
+
+    if (state.currentLevel === 2) {
+      // Save dashboard layout
+      set({ dashboardLayout: dockviewLayout });
+    } else if (state.currentLevel === 3 && state.activeProjectId) {
+      // Save outgoing project's active worktree layout
+      const outProject = getActiveProject(state);
+      if (outProject) {
+        set((s) => ({
+          worktrees: updateWorktreeById(
+            s.worktrees,
+            outProject.activeWorktreeId,
+            { dockviewLayout },
+          ),
+        }));
+      }
+    }
+
+    // Ensure project is open on dashboard
+    const nextOpenIds = state.openProjectIds.includes(id)
+      ? state.openProjectIds
+      : [...state.openProjectIds, id];
+
+    set((s) => ({
+      activeProjectId: id,
+      openProjectIds: nextOpenIds,
+      currentLevel: 3,
       layoutVersion: s.layoutVersion + 1,
     }));
   },
 
-  setActiveProject: (id) => {
+  goToFolderBrowser: () => {
     const state = get();
-    if (state.activeProjectId === id && state.currentLevel >= 2) return;
+    const dockviewLayout = captureOutgoingLayout();
 
-    // Capture outgoing workspace layout if switching projects
-    if (state.activeProjectId && state.activeProjectId !== id) {
-      const { dockviewLayout, expansionReset } =
-        collapseAndCaptureOutgoing(state);
+    if (state.currentLevel === 2) {
+      set({ dashboardLayout: dockviewLayout });
+    } else if (state.currentLevel === 3) {
       const project = getActiveProject(state);
       if (project) {
         set((s) => ({
-          workspaces: updateWorkspaceById(
-            s.workspaces,
-            project.activeWorkspaceId,
-            { dockviewLayout },
-          ),
-          ...expansionReset,
+          worktrees: updateWorktreeById(s.worktrees, project.activeWorktreeId, {
+            dockviewLayout,
+          }),
         }));
       }
     }
 
     set((s) => ({
-      activeProjectId: id,
-      currentLevel: 2,
-      layoutVersion: s.layoutVersion + 1,
-    }));
-
-    // Flush to localStorage — outgoing grid unmounts on project switch
-    const s = get();
-    saveLayout(s.projects, s.workspaces, s.activeProjectId);
-  },
-
-  goToLevel1: () => {
-    const state = get();
-    const { dockviewLayout, expansionReset } =
-      collapseAndCaptureOutgoing(state);
-    const project = getActiveProject(state);
-
-    set((s) => ({
-      ...(project
-        ? {
-            workspaces: updateWorkspaceById(
-              s.workspaces,
-              project.activeWorkspaceId,
-              { dockviewLayout },
-            ),
-          }
-        : {}),
-      ...expansionReset,
       currentLevel: 1 as const,
       layoutVersion: s.layoutVersion + 1,
     }));
 
-    // Flush to localStorage synchronously — the grid unmounts on level change
-    // and would cancel the debounced save in TerminalGrid
+    // Flush to localStorage
     const s = get();
-    saveLayout(s.projects, s.workspaces, s.activeProjectId);
+    saveLayout(s);
+  },
+
+  goToDashboard: () => {
+    const state = get();
+
+    if (state.currentLevel === 3) {
+      const dockviewLayout = captureOutgoingLayout();
+      const project = getActiveProject(state);
+      if (project) {
+        set((s) => ({
+          worktrees: updateWorktreeById(s.worktrees, project.activeWorktreeId, {
+            dockviewLayout,
+          }),
+        }));
+      }
+    }
+
+    set((s) => ({
+      currentLevel: 2 as const,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+
+    // Flush to localStorage
+    const s = get();
+    saveLayout(s);
   },
 
   setMainPane: (paneId) => {
@@ -481,303 +617,215 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
   },
 
-  /* ── Workspace tab actions (scoped to active project) ── */
+  /* ── Worktree tab actions (scoped to active project) ── */
 
-  addWorkspace: (name, cwd, profileId) => {
+  addWorktreeTab: (branch, cwd, profileId) => {
     const state = get();
     const project = getActiveProject(state);
 
     if (!project) {
-      // No project — create one with a workspace
-      const newProject = createProject(name, cwd ?? '');
-      const ws = createProjectWorkspace(
+      // No project — create one with a worktree tab
+      const newProject = createProject(branch, cwd);
+      const wt = createWorktreeTab(
         newProject.id,
-        name,
+        branch,
+        branch,
         cwd,
         profileId ?? 'system-shell',
       );
-      newProject.workspaceIds = [ws.id];
-      newProject.activeWorkspaceId = ws.id;
-      newProject.mainPaneId = ws.panes[0]?.id ?? null;
+      newProject.worktreeIds = [wt.id];
+      newProject.activeWorktreeId = wt.id;
+      newProject.mainPaneId = wt.panes[0]?.id ?? null;
 
       set((s) => ({
         projects: [...s.projects, newProject],
-        workspaces: { ...s.workspaces, [ws.id]: ws },
+        worktrees: { ...s.worktrees, [wt.id]: wt },
+        openProjectIds: [...s.openProjectIds, newProject.id],
         activeProjectId: newProject.id,
-        currentLevel: 2,
+        currentLevel: 3,
+        dashboardLayout: null,
         layoutVersion: s.layoutVersion + 1,
         showProjectBrowser: false,
       }));
 
-      return ws.id;
+      return wt.id;
     }
 
-    const ws = createProjectWorkspace(
+    const wt = createWorktreeTab(
       project.id,
-      name,
+      branch,
+      branch,
       cwd,
       profileId ?? 'system-shell',
     );
 
-    const { dockviewLayout, expansionReset } =
-      collapseAndCaptureOutgoing(state);
+    // Capture outgoing worktree layout
+    const dockviewLayout = captureOutgoingLayout();
 
     set((s) => ({
-      workspaces: {
-        ...updateWorkspaceById(s.workspaces, project.activeWorkspaceId, {
+      worktrees: {
+        ...updateWorktreeById(s.worktrees, project.activeWorktreeId, {
           dockviewLayout,
         }),
-        [ws.id]: ws,
+        [wt.id]: wt,
       },
       projects: updateProject(s.projects, project.id, {
-        workspaceIds: [...project.workspaceIds, ws.id],
-        activeWorkspaceId: ws.id,
+        worktreeIds: [...project.worktreeIds, wt.id],
+        activeWorktreeId: wt.id,
       }),
-      ...expansionReset,
       layoutVersion: s.layoutVersion + 1,
       showProjectBrowser: false,
     }));
 
-    return ws.id;
+    return wt.id;
   },
 
-  removeWorkspace: (id) => {
+  removeWorktreeTab: (id) => {
     const state = get();
     const project = getActiveProject(state);
     if (!project) return;
 
-    const idx = project.workspaceIds.indexOf(id);
+    const idx = project.worktreeIds.indexOf(id);
     if (idx === -1) return;
 
-    // Destroy all terminal entries for the removed workspace
-    const ws = state.workspaces[id];
-    if (ws) {
-      for (const pane of ws.panes) {
+    // Destroy all terminal entries for the removed worktree
+    const wt = state.worktrees[id];
+    if (wt) {
+      for (const pane of wt.panes) {
         destroyTerminalEntry(pane.id);
       }
     }
 
-    const remainingIds = project.workspaceIds.filter((wId) => wId !== id);
-    let nextActiveWsId = project.activeWorkspaceId;
-    if (nextActiveWsId === id) {
-      nextActiveWsId =
+    const remainingIds = project.worktreeIds.filter((wId) => wId !== id);
+    let nextActiveWtId = project.activeWorktreeId;
+    if (nextActiveWtId === id) {
+      nextActiveWtId =
         remainingIds[Math.min(idx, remainingIds.length - 1)] ?? '';
     }
 
     // Remove from flat map
-    const nextWorkspaces = { ...state.workspaces };
-    delete nextWorkspaces[id];
+    const nextWorktrees = { ...state.worktrees };
+    delete nextWorktrees[id];
 
-    // Clear expansion state if the removed workspace owned the expanded pane
-    const needsReset =
-      state.expandedPaneId &&
-      ws?.panes.some((p) => p.id === state.expandedPaneId);
+    // Update mainPaneId if it was in the removed worktree
+    let mainPaneId = project.mainPaneId;
+    if (wt && mainPaneId && wt.panes.some((p) => p.id === mainPaneId)) {
+      const nextWt = nextWorktrees[nextActiveWtId];
+      mainPaneId = nextWt?.panes[0]?.id ?? null;
+    }
 
     set((s) => ({
-      workspaces: nextWorkspaces,
+      worktrees: nextWorktrees,
       projects: updateProject(s.projects, project.id, {
-        workspaceIds: remainingIds,
-        activeWorkspaceId: nextActiveWsId,
+        worktreeIds: remainingIds,
+        activeWorktreeId: nextActiveWtId,
+        mainPaneId,
       }),
-      ...(needsReset
-        ? {
-            expandedPaneId: null,
-            level2PaneIds: [],
-            preExpandLayout: null,
-            level2Layout: null,
-            level3PaneId: null,
-            preLevel3Layout: null,
-          }
-        : {}),
       layoutVersion: s.layoutVersion + 1,
     }));
   },
 
-  setActiveWorkspace: (id) => {
+  setActiveWorktree: (id) => {
     const state = get();
     const project = getActiveProject(state);
-    if (!project || project.activeWorkspaceId === id) return;
+    if (!project || project.activeWorktreeId === id) return;
 
-    const { dockviewLayout, expansionReset } =
-      collapseAndCaptureOutgoing(state);
+    const dockviewLayout = captureOutgoingLayout();
 
     set((s) => ({
-      workspaces: updateWorkspaceById(s.workspaces, project.activeWorkspaceId, {
+      worktrees: updateWorktreeById(s.worktrees, project.activeWorktreeId, {
         dockviewLayout,
       }),
       projects: updateProject(s.projects, project.id, {
-        activeWorkspaceId: id,
+        activeWorktreeId: id,
       }),
-      ...expansionReset,
       layoutVersion: s.layoutVersion + 1,
     }));
 
-    // Flush to localStorage — outgoing grid unmounts on workspace switch
+    // Flush to localStorage
     const s = get();
-    saveLayout(s.projects, s.workspaces, s.activeProjectId);
+    saveLayout(s);
   },
 
-  renameWorkspaceTab: (id, name) =>
+  renameWorktreeTab: (id, name) =>
     set((s) => ({
-      workspaces: updateWorkspaceById(s.workspaces, id, { name }),
+      worktrees: updateWorktreeById(s.worktrees, id, { name }),
     })),
 
-  nextWorkspace: () => {
+  nextWorktree: () => {
     const state = get();
     const project = getActiveProject(state);
-    if (!project || project.workspaceIds.length <= 1) return;
+    if (!project || project.worktreeIds.length <= 1) return;
 
-    const { dockviewLayout, expansionReset } =
-      collapseAndCaptureOutgoing(state);
+    const dockviewLayout = captureOutgoingLayout();
 
-    const idx = project.workspaceIds.indexOf(project.activeWorkspaceId);
-    const nextIdx = (idx + 1) % project.workspaceIds.length;
-    const nextWsId = project.workspaceIds[nextIdx]!;
+    const idx = project.worktreeIds.indexOf(project.activeWorktreeId);
+    const nextIdx = (idx + 1) % project.worktreeIds.length;
+    const nextWtId = project.worktreeIds[nextIdx]!;
 
     set((s) => ({
-      workspaces: updateWorkspaceById(s.workspaces, project.activeWorkspaceId, {
+      worktrees: updateWorktreeById(s.worktrees, project.activeWorktreeId, {
         dockviewLayout,
       }),
       projects: updateProject(s.projects, project.id, {
-        activeWorkspaceId: nextWsId,
+        activeWorktreeId: nextWtId,
       }),
-      ...expansionReset,
       layoutVersion: s.layoutVersion + 1,
     }));
   },
 
-  prevWorkspace: () => {
+  prevWorktree: () => {
     const state = get();
     const project = getActiveProject(state);
-    if (!project || project.workspaceIds.length <= 1) return;
+    if (!project || project.worktreeIds.length <= 1) return;
 
-    const { dockviewLayout, expansionReset } =
-      collapseAndCaptureOutgoing(state);
+    const dockviewLayout = captureOutgoingLayout();
 
-    const idx = project.workspaceIds.indexOf(project.activeWorkspaceId);
+    const idx = project.worktreeIds.indexOf(project.activeWorktreeId);
     const prevIdx =
-      (idx - 1 + project.workspaceIds.length) % project.workspaceIds.length;
-    const prevWsId = project.workspaceIds[prevIdx]!;
+      (idx - 1 + project.worktreeIds.length) % project.worktreeIds.length;
+    const prevWtId = project.worktreeIds[prevIdx]!;
 
     set((s) => ({
-      workspaces: updateWorkspaceById(s.workspaces, project.activeWorkspaceId, {
+      worktrees: updateWorktreeById(s.worktrees, project.activeWorktreeId, {
         dockviewLayout,
       }),
       projects: updateProject(s.projects, project.id, {
-        activeWorkspaceId: prevWsId,
+        activeWorktreeId: prevWtId,
       }),
-      ...expansionReset,
       layoutVersion: s.layoutVersion + 1,
     }));
   },
 
-  /* ── Level 2 — expand/collapse ── */
-
-  expandPane: (paneId) => {
-    // Save grid Dockview layout before expanding
-    let preExpandLayout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        preExpandLayout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
-
-    const state = get();
-    const ws = getActive(state);
-
-    // If re-expanding the same pane, reuse its saved level 2 pane IDs
-    const existingL2 =
-      ws?.panes
-        .filter((p) => p.id !== paneId)
-        .filter((p) => {
-          // A pane is a level 2 pane if it was previously tracked
-          return state.level2PaneIds.includes(p.id);
-        })
-        .map((p) => p.id) ?? [];
-
-    set((s) => ({
-      expandedPaneId: paneId,
-      level2PaneIds: existingL2,
-      preExpandLayout,
-      ...updateActive(s, () => ({ maximizedPaneId: null })),
-      layoutVersion: s.layoutVersion + 1,
-    }));
-  },
-
-  collapsePane: () => {
-    // Save the level 2 Dockview layout for re-expansion
-    let level2Layout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        level2Layout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
-
-    set((s) => ({
-      expandedPaneId: null,
-      // Keep level2PaneIds so re-expand knows which panes belong to level 2
-      level2Layout,
-      level3PaneId: null,
-      preLevel3Layout: null,
-      layoutVersion: s.layoutVersion + 1,
-    }));
-  },
-
-  enterLevel3: (paneId) => {
-    // Save level 2 Dockview layout, then show only this one pane
-    let preLevel3Layout: unknown = null;
-    try {
-      if (dockviewApiRef.current)
-        preLevel3Layout = dockviewApiRef.current.toJSON();
-    } catch {
-      /* ignore */
-    }
-
-    set((s) => ({
-      level3PaneId: paneId,
-      preLevel3Layout,
-      layoutVersion: s.layoutVersion + 1,
-    }));
-  },
-
-  exitLevel3: () => {
-    set((s) => ({
-      level3PaneId: null,
-      layoutVersion: s.layoutVersion + 1,
-    }));
-  },
-
-  /* ── Pane actions (scoped to active workspace) ── */
+  /* ── Pane actions (scoped to active worktree) ── */
 
   setActivePaneId: (id) =>
     set((state) => updateActive(state, () => ({ activePaneId: id }))),
 
   addPane: (profileId, direction = 'right') =>
     set((state) => {
-      // Block adding panes in level 3
-      if (state.level3PaneId) return state;
-
-      const ws = getActive(state);
-      if (!ws) {
-        // No workspace — create a project + workspace
+      const wt = getActive(state);
+      if (!wt) {
+        // No worktree — create a project + worktree
         const newProject = createProject('New Project', '');
-        const newWs = createProjectWorkspace(
+        const newWt = createWorktreeTab(
           newProject.id,
-          'Default',
-          undefined,
+          'main',
+          'main',
+          '',
           profileId,
         );
-        newProject.workspaceIds = [newWs.id];
-        newProject.activeWorkspaceId = newWs.id;
-        newProject.mainPaneId = newWs.panes[0]?.id ?? null;
+        newProject.worktreeIds = [newWt.id];
+        newProject.activeWorktreeId = newWt.id;
+        newProject.mainPaneId = newWt.panes[0]?.id ?? null;
 
         return {
           projects: [...state.projects, newProject],
-          workspaces: { ...state.workspaces, [newWs.id]: newWs },
+          worktrees: { ...state.worktrees, [newWt.id]: newWt },
+          openProjectIds: [...state.openProjectIds, newProject.id],
           activeProjectId: newProject.id,
-          currentLevel: 2 as const,
+          currentLevel: 3 as const,
+          dashboardLayout: null,
           layoutVersion: state.layoutVersion + 1,
           showProjectBrowser: false,
         };
@@ -785,35 +833,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       const pane = createPane(profileId);
       const refPaneId =
-        ws.activePaneId ?? ws.panes[ws.panes.length - 1]?.id ?? null;
+        wt.activePaneId ?? wt.panes[wt.panes.length - 1]?.id ?? null;
       const paneWithSplit: Pane = refPaneId
         ? { ...pane, splitFrom: { paneId: refPaneId, direction } }
         : pane;
 
       return {
         ...updateActive(state, () => ({
-          panes: [...ws.panes, paneWithSplit],
+          panes: [...wt.panes, paneWithSplit],
           activePaneId: paneWithSplit.id,
           activePreset: null,
         })),
-        // Track as level 2 pane if expanded
-        level2PaneIds: state.expandedPaneId
-          ? [...state.level2PaneIds, paneWithSplit.id]
-          : state.level2PaneIds,
         showProjectBrowser:
-          ws.panes.length === 0 ? false : state.showProjectBrowser,
+          wt.panes.length === 0 ? false : state.showProjectBrowser,
       };
     }),
 
   addPaneWithCwd: (profileId, cwd, direction = 'right') =>
     set((state) => {
-      if (state.level3PaneId) return state;
-      const ws = getActive(state);
-      if (!ws) return state;
+      const wt = getActive(state);
+      if (!wt) return state;
 
       const pane = createPane(profileId);
       const refPaneId =
-        ws.activePaneId ?? ws.panes[ws.panes.length - 1]?.id ?? null;
+        wt.activePaneId ?? wt.panes[wt.panes.length - 1]?.id ?? null;
       const paneWithMeta: Pane = {
         ...pane,
         cwd,
@@ -822,24 +865,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
       return {
         ...updateActive(state, () => ({
-          panes: [...ws.panes, paneWithMeta],
+          panes: [...wt.panes, paneWithMeta],
           activePaneId: paneWithMeta.id,
           activePreset: null,
         })),
         showProjectBrowser:
-          ws.panes.length === 0 ? false : state.showProjectBrowser,
+          wt.panes.length === 0 ? false : state.showProjectBrowser,
       };
     }),
 
   removePane: (id) =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
+      const wt = getActive(state);
+      if (!wt) return state;
 
-      const remaining = ws.panes.filter((p) => p.id !== id);
-      let nextActiveId = ws.activePaneId;
+      const remaining = wt.panes.filter((p) => p.id !== id);
+      let nextActiveId = wt.activePaneId;
       if (nextActiveId === id) {
-        const oldIndex = ws.panes.findIndex((p) => p.id === id);
+        const oldIndex = wt.panes.findIndex((p) => p.id === id);
         nextActiveId =
           remaining[Math.min(oldIndex, remaining.length - 1)]?.id ?? null;
       }
@@ -856,49 +899,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         };
       }
 
-      // Clear global expansion/level state if the removed pane is involved
-      let levelReset: Partial<WorkspaceState> = {};
-      if (state.expandedPaneId === id) {
-        // Closing the expanded pane — collapse back to full grid
-        levelReset = {
-          expandedPaneId: null,
-          level2PaneIds: [],
-          preExpandLayout: null,
-          level2Layout: null,
-          level3PaneId: null,
-          preLevel3Layout: null,
-        };
-      } else if (state.level3PaneId === id) {
-        // Closing the level-3 pane — drop back to level 2
-        levelReset = { level3PaneId: null };
-      }
-      // Remove pane from level2PaneIds if it was a level-2 ephemeral pane
-      if (state.level2PaneIds.includes(id)) {
-        levelReset.level2PaneIds = state.level2PaneIds.filter((p) => p !== id);
-      }
-
       return {
         ...updateActive(state, () => ({
           panes: remaining,
           activePaneId: nextActiveId,
           activePreset: null,
           maximizedPaneId:
-            ws.maximizedPaneId === id ? null : ws.maximizedPaneId,
+            wt.maximizedPaneId === id ? null : wt.maximizedPaneId,
         })),
         ...projectUpdate,
-        ...levelReset,
       };
     }),
 
   applyPreset: (presetName, profileId) =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
+      const wt = getActive(state);
+      if (!wt) return state;
 
       const preset = GRID_PRESETS.find((p) => p.name === presetName);
       if (!preset) return state;
 
-      const existingPanes = [...ws.panes];
+      const existingPanes = [...wt.panes];
       const newPanes: Pane[] = [];
       while (existingPanes.length + newPanes.length < preset.panelCount) {
         newPanes.push(createPane(profileId));
@@ -930,21 +951,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           activePreset: presetName,
           dockviewLayout: null,
         })),
-        expandedPaneId: null,
-        level2PaneIds: [],
-        level2Layout: null,
-        level3PaneId: null,
-        preExpandLayout: null,
-        preLevel3Layout: null,
         layoutVersion: state.layoutVersion + 1,
         showProjectBrowser: false,
       };
     }),
 
   clearAllPanes: () => {
-    const ws = getActive(get());
-    if (ws) {
-      for (const pane of ws.panes) {
+    const wt = getActive(get());
+    if (wt) {
+      for (const pane of wt.panes) {
         destroyTerminalEntry(pane.id);
       }
       usePaneStatusStore.getState().clearAll();
@@ -966,12 +981,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   updatePaneProfile: (paneId, profileId) =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
+      const wt = getActive(state);
+      if (!wt) return state;
       const profile =
         state.profiles.find((p) => p.id === profileId) ?? defaultProfile;
       return updateActive(state, () => ({
-        panes: ws.panes.map((p) =>
+        panes: wt.panes.map((p) =>
           p.id === paneId ? { ...p, profileId, title: profile.name } : p,
         ),
         activePreset: null,
@@ -980,10 +995,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   updatePaneColor: (paneId, color) =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
+      const wt = getActive(state);
+      if (!wt) return state;
       return updateActive(state, () => ({
-        panes: ws.panes.map((p) =>
+        panes: wt.panes.map((p) =>
           p.id === paneId ? { ...p, colorOverride: color } : p,
         ),
       }));
@@ -991,64 +1006,59 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   updatePaneCwd: (paneId, cwd) =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
+      const wt = getActive(state);
+      if (!wt) return state;
       return updateActive(state, () => ({
-        panes: ws.panes.map((p) => (p.id === paneId ? { ...p, cwd } : p)),
+        panes: wt.panes.map((p) => (p.id === paneId ? { ...p, cwd } : p)),
       }));
     }),
 
   toggleMaximize: (paneId) => {
-    const state = get();
-    if (state.level3PaneId) {
-      // In level 3 — go back to level 2
-      state.exitLevel3();
-    } else if (state.expandedPaneId) {
-      // In level 2 — enter level 3 (maximize single terminal)
-      state.enterLevel3(paneId);
-    } else {
-      // In level 1 — enter level 2
-      state.expandPane(paneId);
-    }
+    set((state) => {
+      const wt = getActive(state);
+      if (!wt) return state;
+      const newMaximizedId = wt.maximizedPaneId === paneId ? null : paneId;
+      return updateActive(state, () => ({ maximizedPaneId: newMaximizedId }));
+    });
   },
 
   focusNextPane: () =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws || ws.panes.length === 0) return state;
-      const idx = ws.panes.findIndex((p) => p.id === ws.activePaneId);
+      const wt = getActive(state);
+      if (!wt || wt.panes.length === 0) return state;
+      const idx = wt.panes.findIndex((p) => p.id === wt.activePaneId);
       if (idx === -1)
-        return updateActive(state, () => ({ activePaneId: ws.panes[0]!.id }));
-      const next = ws.panes[(idx + 1) % ws.panes.length]!;
+        return updateActive(state, () => ({ activePaneId: wt.panes[0]!.id }));
+      const next = wt.panes[(idx + 1) % wt.panes.length]!;
       return updateActive(state, () => ({ activePaneId: next.id }));
     }),
 
   focusPrevPane: () =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws || ws.panes.length === 0) return state;
-      const idx = ws.panes.findIndex((p) => p.id === ws.activePaneId);
+      const wt = getActive(state);
+      if (!wt || wt.panes.length === 0) return state;
+      const idx = wt.panes.findIndex((p) => p.id === wt.activePaneId);
       if (idx === -1)
         return updateActive(state, () => ({
-          activePaneId: ws.panes[ws.panes.length - 1]!.id,
+          activePaneId: wt.panes[wt.panes.length - 1]!.id,
         }));
-      const prev = ws.panes[(idx - 1 + ws.panes.length) % ws.panes.length]!;
+      const prev = wt.panes[(idx - 1 + wt.panes.length) % wt.panes.length]!;
       return updateActive(state, () => ({ activePaneId: prev.id }));
     }),
 
   focusPaneByIndex: (index) =>
     set((state) => {
-      const ws = getActive(state);
-      if (!ws) return state;
-      const pane = ws.panes[index];
+      const wt = getActive(state);
+      if (!wt) return state;
+      const pane = wt.panes[index];
       if (!pane) return state;
       return updateActive(state, () => ({ activePaneId: pane.id }));
     }),
 
   focusDirection: (direction) => {
     const state = get();
-    const ws = getActive(state);
-    if (!ws?.activePaneId) return;
+    const wt = getActive(state);
+    if (!wt?.activePaneId) return;
 
     const elements = document.querySelectorAll<HTMLElement>('[data-pane-id]');
     const rects = new Map<string, DOMRect>();
@@ -1057,7 +1067,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (id) rects.set(id, el.getBoundingClientRect());
     });
 
-    const activeRect = rects.get(ws.activePaneId);
+    const activeRect = rects.get(wt.activePaneId);
     if (!activeRect) return;
 
     const activeCx = activeRect.left + activeRect.width / 2;
@@ -1067,7 +1077,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     let bestDist = Infinity;
 
     for (const [id, rect] of rects) {
-      if (id === ws.activePaneId) continue;
+      if (id === wt.activePaneId) continue;
       const cx = rect.left + rect.width / 2;
       const cy = rect.top + rect.height / 2;
       const dx = cx - activeCx;
@@ -1123,6 +1133,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   /* ── UI actions ── */
 
   setProjectsPath: (path) => set({ projectsPath: path }),
+  setRootFolderPath: (path) => set({ rootFolderPath: path }),
   setShowProjectBrowser: (show) => set({ showProjectBrowser: show }),
   setChangeDirPaneId: (paneId) => set({ changeDirPaneId: paneId }),
   setPendingCwd: (paneId, path) => set({ pendingCwd: { paneId, path } }),
@@ -1130,86 +1141,91 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setShowCommandPalette: (show) => set({ showCommandPalette: show }),
   setShowWorktreeDialog: (show) => set({ showWorktreeDialog: show }),
 
-  /* ── Worktree workspace ── */
+  /* ── Worktree creation (git worktree + new tab) ── */
 
-  addWorktreeWorkspace: (worktreePath, worktreeBranch) => {
+  createWorktreeFromGit: (worktreePath, worktreeBranch) => {
     const state = get();
     const project = getActiveProject(state);
     if (!project) return '';
 
-    const currentWs = state.workspaces[project.activeWorkspaceId];
+    const currentWt = state.worktrees[project.activeWorktreeId];
 
-    // Clone panes from current workspace with new IDs and updated cwd
-    const clonedPanes: Pane[] = (currentWs?.panes ?? []).map((p) => ({
+    // Clone panes from current worktree with new IDs and updated cwd
+    const clonedPanes: Pane[] = (currentWt?.panes ?? []).map((p) => ({
       ...p,
       id: generateId(),
       cwd: worktreePath,
       dockviewPosition: undefined,
     }));
 
-    const now = new Date().toISOString();
-    const ws: ProjectWorkspace = {
-      id: generateId(),
-      projectId: project.id,
-      name: worktreeBranch,
-      worktreePath,
+    // Create a new worktree tab
+    const wt = createWorktreeTab(
+      project.id,
       worktreeBranch,
-      panes: clonedPanes,
-      activePaneId: clonedPanes[0]?.id ?? null,
-      maximizedPaneId: null,
-      activePreset: null,
-      dockviewLayout: null, // Dockview rebuilds from pane positions
-      createdAt: now,
-      updatedAt: now,
-    };
+      worktreeBranch,
+      worktreePath,
+    );
+    wt.panes = clonedPanes;
+    wt.activePaneId = clonedPanes[0]?.id ?? null;
 
-    const { dockviewLayout, expansionReset } =
-      collapseAndCaptureOutgoing(state);
+    // Capture outgoing layout from current worktree
+    const dockviewLayout = captureOutgoingLayout();
 
     set((s) => ({
-      workspaces: {
-        ...updateWorkspaceById(s.workspaces, project.activeWorkspaceId, {
+      worktrees: {
+        ...updateWorktreeById(s.worktrees, project.activeWorktreeId, {
           dockviewLayout,
         }),
-        [ws.id]: ws,
+        [wt.id]: wt,
       },
       projects: updateProject(s.projects, project.id, {
-        workspaceIds: [...project.workspaceIds, ws.id],
-        activeWorkspaceId: ws.id,
+        worktreeIds: [...project.worktreeIds, wt.id],
+        activeWorktreeId: wt.id,
       }),
-      ...expansionReset,
       showWorktreeDialog: false,
       layoutVersion: s.layoutVersion + 1,
     }));
 
-    return ws.id;
+    // Flush to localStorage
+    const s = get();
+    saveLayout(s);
+
+    return wt.id;
   },
 
   /* ── Layout persistence ── */
 
   initProjectsPath: async () => {
-    if (get().projectsPath) return;
+    const state = get();
+    if (state.projectsPath && state.rootFolderPath) return;
     try {
       const home = await getHomeDir();
       const sep = getPlatform() === 'windows' ? '\\' : '/';
-      set({ projectsPath: home + sep + 'Desktop' + sep + 'Projects' });
+      const defaultPath = home + sep + 'Desktop' + sep + 'Projects';
+      set({
+        projectsPath: state.projectsPath || defaultPath,
+        rootFolderPath: state.rootFolderPath ?? defaultPath,
+      });
     } catch {
       const fallback = getPlatform() === 'windows' ? 'C:\\Users' : '/home';
-      set({ projectsPath: fallback });
+      set({
+        projectsPath: state.projectsPath || fallback,
+        rootFolderPath: state.rootFolderPath ?? fallback,
+      });
     }
   },
 
   restoreLayout: () => {
     const saved = cachedStartupLayout ?? loadLayout();
-    cachedStartupLayout = null; // Release cached reference after first use
+    cachedStartupLayout = null;
     if (!saved) return false;
 
     const profiles = get().profiles;
 
-    // Validate workspaces and their panes
-    const validWorkspaces: Record<string, ProjectWorkspace> = {};
-    for (const [wsId, ws] of Object.entries(saved.workspaces)) {
-      const validPanes = ws.panes.filter(
+    // Validate worktrees and their panes
+    const validWorktrees: Record<string, WorktreeTab> = {};
+    for (const [wtId, wt] of Object.entries(saved.worktrees)) {
+      const validPanes = wt.panes.filter(
         (p) =>
           p.id && p.profileId && profiles.some((dp) => dp.id === p.profileId),
       );
@@ -1236,36 +1252,36 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       });
 
       if (sanitizedPanes.length > 0) {
-        validWorkspaces[wsId] = {
-          ...ws,
+        validWorktrees[wtId] = {
+          ...wt,
           panes: sanitizedPanes,
           activePaneId:
-            ws.activePaneId && validIds.has(ws.activePaneId)
-              ? ws.activePaneId
+            wt.activePaneId && validIds.has(wt.activePaneId)
+              ? wt.activePaneId
               : (sanitizedPanes[0]?.id ?? null),
         };
       }
     }
 
-    if (Object.keys(validWorkspaces).length === 0) {
+    if (Object.keys(validWorktrees).length === 0) {
       clearSavedLayout();
       return false;
     }
 
-    // Validate projects — ensure their workspaceIds reference valid workspaces
+    // Validate projects — ensure their worktreeIds reference valid worktrees
     const validProjects = saved.projects
       .map((project) => {
-        const validWsIds = project.workspaceIds.filter(
-          (id) => validWorkspaces[id],
+        const validWtIds = project.worktreeIds.filter(
+          (id) => validWorktrees[id],
         );
-        if (validWsIds.length === 0) return null;
-        const activeWsId = validWsIds.includes(project.activeWorkspaceId)
-          ? project.activeWorkspaceId
-          : validWsIds[0]!;
+        if (validWtIds.length === 0) return null;
+        const activeWtId = validWtIds.includes(project.activeWorktreeId)
+          ? project.activeWorktreeId
+          : validWtIds[0]!;
         return {
           ...project,
-          workspaceIds: validWsIds,
-          activeWorkspaceId: activeWsId,
+          worktreeIds: validWtIds,
+          activeWorktreeId: activeWtId,
         };
       })
       .filter(Boolean) as Project[];
@@ -1281,11 +1297,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ? saved.activeProjectId
         : validProjects[0]!.id;
 
+    const openProjectIds = saved.openProjectIds.filter((id) =>
+      validProjects.some((p) => p.id === id),
+    );
+
     set((state) => ({
       projects: validProjects,
-      workspaces: validWorkspaces,
+      worktrees: validWorktrees,
+      openProjectIds,
       activeProjectId,
-      currentLevel: 2,
+      dashboardLayout: saved.dashboardLayout ?? null,
+      rootFolderPath: saved.rootFolderPath ?? state.rootFolderPath,
+      currentLevel: saved.currentLevel ?? (openProjectIds.length > 0 ? 2 : 1),
       layoutVersion: state.layoutVersion + 1,
     }));
 
@@ -1297,41 +1320,36 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const project = getActiveProject(state);
     if (!project) return;
 
-    // Use canonical layout when expanded (live grid is a filtered subset)
     let dockviewLayout: unknown = null;
-    if (state.expandedPaneId && state.preExpandLayout) {
-      dockviewLayout = state.preExpandLayout;
-    } else {
-      try {
-        if (dockviewApiRef.current)
-          dockviewLayout = dockviewApiRef.current.toJSON();
-      } catch {
-        /* ignore */
-      }
+    try {
+      if (dockviewApiRef.current)
+        dockviewLayout = dockviewApiRef.current.toJSON();
+    } catch {
+      /* ignore */
     }
 
-    const updatedWorkspaces = updateWorkspaceById(
-      state.workspaces,
-      project.activeWorkspaceId,
+    const updatedWorktrees = updateWorktreeById(
+      state.worktrees,
+      project.activeWorktreeId,
       { dockviewLayout },
     );
 
-    // Convert to V2-compat WorkspaceTab[] for named layout storage
-    const workspaceTabs: WorkspaceTab[] = project.workspaceIds
-      .map((id) => updatedWorkspaces[id])
+    // Convert to compat WorkspaceTab[] for named layout storage
+    const workspaceTabs = project.worktreeIds
+      .map((id) => updatedWorktrees[id])
       .filter(Boolean)
-      .map((ws) => ({
-        id: ws!.id,
-        name: ws!.name,
-        color: ws!.color,
-        cwd: ws!.worktreePath,
-        panes: ws!.panes,
-        activePaneId: ws!.activePaneId,
-        maximizedPaneId: ws!.maximizedPaneId,
-        activePreset: ws!.activePreset,
-        dockviewLayout: ws!.dockviewLayout,
-        createdAt: ws!.createdAt,
-        updatedAt: ws!.updatedAt,
+      .map((wt) => ({
+        id: wt!.id,
+        name: wt!.name,
+        color: undefined,
+        cwd: wt!.cwd,
+        panes: wt!.panes,
+        activePaneId: wt!.activePaneId,
+        maximizedPaneId: wt!.maximizedPaneId,
+        activePreset: wt!.activePreset,
+        dockviewLayout: wt!.dockviewLayout,
+        createdAt: wt!.createdAt,
+        updatedAt: wt!.updatedAt,
       }));
 
     const layout: NamedLayout = {
@@ -1354,12 +1372,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const profiles = state.profiles;
     const project = getActiveProject(state);
 
-    // Named layouts store WorkspaceTab[] — convert to ProjectWorkspace
-    // Generate fresh IDs so importing a layout never collides with live state
     const projectId = project?.id ?? generateId();
 
-    const convertedWorkspaces: Record<string, ProjectWorkspace> = {};
-    const wsIds: string[] = [];
+    const convertedWorktrees: Record<string, WorktreeTab> = {};
+    const wtIds: string[] = [];
 
     for (const wsTab of layout.workspaces) {
       const validPanes = wsTab.panes.filter(
@@ -1395,12 +1411,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           : undefined,
       }));
 
-      const newWsId = generateId();
-      const pw: ProjectWorkspace = {
-        id: newWsId,
+      const newWtId = generateId();
+      const wt: WorktreeTab = {
+        id: newWtId,
         projectId,
         name: wsTab.name,
-        worktreePath: wsTab.cwd,
+        branch: wsTab.name === 'Default' ? 'main' : wsTab.name,
+        cwd: wsTab.cwd ?? '',
         panes: rekeyedPanes,
         activePaneId: wsTab.activePaneId
           ? (paneIdMap.get(wsTab.activePaneId) ?? rekeyedPanes[0]?.id ?? null)
@@ -1409,48 +1426,45 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ? (paneIdMap.get(wsTab.maximizedPaneId) ?? null)
           : null,
         activePreset: wsTab.activePreset,
-        // Null out dockviewLayout — embedded panel IDs no longer match
-        // The grid will rebuild positioning from the pane list
         dockviewLayout: null,
-        color: wsTab.color,
         createdAt: wsTab.createdAt,
         updatedAt: wsTab.updatedAt,
       };
-      convertedWorkspaces[pw.id] = pw;
-      wsIds.push(pw.id);
+      convertedWorktrees[wt.id] = wt;
+      wtIds.push(wt.id);
     }
 
-    if (wsIds.length === 0) return;
+    if (wtIds.length === 0) return;
 
     if (project) {
-      // Replace workspaces in existing project
-      // Remove old workspaces
-      const nextWorkspaces = { ...state.workspaces };
-      for (const oldId of project.workspaceIds) {
-        delete nextWorkspaces[oldId];
+      // Replace worktrees in existing project
+      const nextWorktrees = { ...state.worktrees };
+      for (const oldId of project.worktreeIds) {
+        delete nextWorktrees[oldId];
       }
-      // Add new ones
-      Object.assign(nextWorkspaces, convertedWorkspaces);
+      Object.assign(nextWorktrees, convertedWorktrees);
 
       set((s) => ({
-        workspaces: nextWorkspaces,
+        worktrees: nextWorktrees,
         projects: updateProject(s.projects, project.id, {
-          workspaceIds: wsIds,
-          activeWorkspaceId: wsIds[0]!,
+          worktreeIds: wtIds,
+          activeWorktreeId: wtIds[0]!,
         }),
         layoutVersion: s.layoutVersion + 1,
       }));
     } else {
       // Create a new project for the layout
       const newProject = createProject(layout.name, '');
-      newProject.workspaceIds = wsIds;
-      newProject.activeWorkspaceId = wsIds[0]!;
+      newProject.worktreeIds = wtIds;
+      newProject.activeWorktreeId = wtIds[0]!;
 
       set((s) => ({
         projects: [...s.projects, newProject],
-        workspaces: { ...s.workspaces, ...convertedWorkspaces },
+        worktrees: { ...s.worktrees, ...convertedWorktrees },
+        openProjectIds: [...s.openProjectIds, newProject.id],
         activeProjectId: newProject.id,
-        currentLevel: 2,
+        currentLevel: 3,
+        dashboardLayout: null,
         layoutVersion: s.layoutVersion + 1,
       }));
     }

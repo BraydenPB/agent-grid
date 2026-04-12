@@ -79,7 +79,7 @@ export function ProjectBrowser({
     projectsPath,
     addPane,
     addPaneWithCwd,
-    addWorkspace,
+    addWorktreeTab,
     applyPreset,
     changeDirPaneId,
     setChangeDirPaneId,
@@ -150,7 +150,7 @@ export function ProjectBrowser({
         onClose?.();
       } else {
         // Full-page mode — create a new workspace tab
-        addWorkspace(project.name, project.path, profile.id);
+        addWorktreeTab('main', project.path, profile.id);
       }
     },
     [
@@ -160,7 +160,7 @@ export function ProjectBrowser({
       setChangeDirPaneId,
       onClose,
       addPaneWithCwd,
-      addWorkspace,
+      addWorktreeTab,
       overlay,
     ],
   );

@@ -4,7 +4,7 @@ import { Search, Command } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   useWorkspaceStore,
-  getActiveWorkspace,
+  getActiveWorktree,
   getActiveProject,
 } from '@/store/workspace-store';
 import { GRID_PRESETS } from '@/lib/grid-presets';
@@ -67,7 +67,7 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        const ws = getActiveWorkspace(s);
+        const ws = getActiveWorktree(s);
         if (ws?.activePaneId) s.removePane(ws.activePaneId);
       },
     },
@@ -78,7 +78,7 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        const ws = getActiveWorkspace(s);
+        const ws = getActiveWorktree(s);
         const profileId =
           ws?.panes.find((p) => p.id === ws?.activePaneId)?.profileId ??
           'system-shell';
@@ -92,7 +92,7 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        const ws = getActiveWorkspace(s);
+        const ws = getActiveWorktree(s);
         const profileId =
           ws?.panes.find((p) => p.id === ws?.activePaneId)?.profileId ??
           'system-shell';
@@ -106,7 +106,7 @@ function buildActions(): PaletteAction[] {
       category: 'Terminals',
       action: () => {
         const s = store();
-        const ws = getActiveWorkspace(s);
+        const ws = getActiveWorktree(s);
         if (ws?.activePaneId) s.toggleMaximize(ws.activePaneId);
       },
     },
@@ -185,6 +185,23 @@ function buildActions(): PaletteAction[] {
     },
   );
 
+  // Navigation — levels
+  actions.push(
+    {
+      id: 'go-to-dashboard',
+      label: 'Go to Dashboard',
+      shortcut: 'Esc',
+      category: 'Navigation',
+      action: () => store().goToDashboard(),
+    },
+    {
+      id: 'go-to-folder-browser',
+      label: 'Go to Folder Browser',
+      category: 'Navigation',
+      action: () => store().goToFolderBrowser(),
+    },
+  );
+
   // Tools
   actions.push(
     {
@@ -209,8 +226,22 @@ function buildActions(): PaletteAction[] {
     actions.push({
       id: 'new-worktree',
       label: 'New Worktree',
-      category: 'Workspaces',
+      shortcut: 'Ctrl+N',
+      category: 'Worktrees',
       action: () => store().setShowWorktreeDialog(true),
+    });
+  }
+
+  // Close project from dashboard
+  const openProjects = store().projects.filter((p) =>
+    store().openProjectIds.includes(p.id),
+  );
+  for (const proj of openProjects) {
+    actions.push({
+      id: `close-project-${proj.id}`,
+      label: `Close Project: ${proj.name}`,
+      category: 'Projects',
+      action: () => store().closeProject(proj.id),
     });
   }
 

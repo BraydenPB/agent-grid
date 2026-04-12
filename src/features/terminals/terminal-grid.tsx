@@ -9,9 +9,9 @@ import { AnimatePresence } from 'framer-motion';
 import 'dockview/dist/styles/dockview.css';
 import {
   useWorkspaceStore,
-  getActiveWorkspace,
+  getActiveWorktree,
   getAllPaneIds,
-  getActiveWorkspaceId,
+  getActiveWorktreeId,
 } from '@/store/workspace-store';
 import { ProjectBrowser } from '@/features/projects/project-browser';
 import {
@@ -47,8 +47,8 @@ function TerminalPaneWrapper({
   onClose: () => void;
 }) {
   const isActive = useWorkspaceStore((s) => {
-    const ws = getActiveWorkspace(s);
-    return ws?.activePaneId === paneId;
+    const wt = getActiveWorktree(s);
+    return wt?.activePaneId === paneId;
   });
   const setActivePaneId = useWorkspaceStore((s) => s.setActivePaneId);
 
@@ -65,35 +65,16 @@ function TerminalPaneWrapper({
 }
 
 export function TerminalGrid() {
-  const activeWorkspace = useWorkspaceStore(getActiveWorkspace);
+  const activeWorktree = useWorkspaceStore(getActiveWorktree);
   const profiles = useWorkspaceStore((s) => s.profiles);
   const layoutVersion = useWorkspaceStore((s) => s.layoutVersion);
   const showProjectBrowser = useWorkspaceStore((s) => s.showProjectBrowser);
   const setShowProjectBrowser = useWorkspaceStore(
     (s) => s.setShowProjectBrowser,
   );
-  const setChangeDirPaneId = useWorkspaceStore((s) => s.setChangeDirPaneId);
-
-  const expandedPaneId = useWorkspaceStore((s) => s.expandedPaneId);
-  const level2PaneIds = useWorkspaceStore((s) => s.level2PaneIds);
-  const level3PaneId = useWorkspaceStore((s) => s.level3PaneId);
-
-  const allPanes = activeWorkspace?.panes ?? EMPTY_PANES;
-  // Level 3: show only the single maximized pane
-  // Level 2: show the expanded pane + level 2 panes
-  // Level 1: show all panes
-  const panes = useMemo(() => {
-    if (level3PaneId !== null) {
-      return allPanes.filter((p) => p.id === level3PaneId);
-    }
-    if (expandedPaneId !== null) {
-      return allPanes.filter(
-        (p) => p.id === expandedPaneId || level2PaneIds.includes(p.id),
-      );
-    }
-    return allPanes;
-  }, [allPanes, level3PaneId, expandedPaneId, level2PaneIds]);
-  const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
+  // Level 3: show ALL panes from active worktree (no filtering)
+  const panes = activeWorktree?.panes ?? EMPTY_PANES;
+  const maximizedPaneId = activeWorktree?.maximizedPaneId ?? null;
 
   const [localDockviewApi, setLocalDockviewApi] = useState<DockviewApi | null>(
     null,
@@ -111,10 +92,10 @@ export function TerminalGrid() {
 
       // Restore saved Dockview layout if available
       const savedLayout = useWorkspaceStore.getState();
-      const activeWs = getActiveWorkspace(savedLayout);
-      if (activeWs?.dockviewLayout) {
+      const activeWt = getActiveWorktree(savedLayout);
+      if (activeWt?.dockviewLayout) {
         try {
-          event.api.fromJSON(activeWs.dockviewLayout as any);
+          event.api.fromJSON(activeWt.dockviewLayout as any);
           return;
         } catch {
           // fall through to manual rebuild
@@ -178,15 +159,15 @@ export function TerminalGrid() {
     const disposable = localDockviewApi.onDidLayoutChange(() => {
       if (programmaticChangeRef.current) return;
       const state = useWorkspaceStore.getState();
-      const ws = getActiveWorkspace(state);
-      if (ws?.activePreset) {
-        const activeWsId = getActiveWorkspaceId(state);
-        if (activeWsId) {
+      const wt = getActiveWorktree(state);
+      if (wt?.activePreset) {
+        const activeWtId = getActiveWorktreeId(state);
+        if (activeWtId) {
           useWorkspaceStore.setState((s) => ({
-            workspaces: {
-              ...s.workspaces,
-              [activeWsId]: {
-                ...s.workspaces[activeWsId]!,
+            worktrees: {
+              ...s.worktrees,
+              [activeWtId]: {
+                ...s.worktrees[activeWtId]!,
                 activePreset: null,
                 updatedAt: new Date().toISOString(),
               },
@@ -201,7 +182,7 @@ export function TerminalGrid() {
     };
   }, [localDockviewApi]);
 
-  // Detect layout version change (preset applied or workspace switch) — rearrange Dockview
+  // Detect layout version change (preset applied or worktree switch) — rearrange Dockview
   useEffect(() => {
     const api = localDockviewApi;
     if (!api) return;
@@ -212,60 +193,11 @@ export function TerminalGrid() {
 
       const storeState = useWorkspaceStore.getState();
 
-      // Exiting level 3 — restore the level 2 layout
-      if (
-        storeState.expandedPaneId &&
-        !storeState.level3PaneId &&
-        storeState.preLevel3Layout
-      ) {
+      // Restore saved Dockview layout if available (worktree switch)
+      const incomingWt = getActiveWorktree(storeState);
+      if (incomingWt?.dockviewLayout) {
         try {
-          api.fromJSON(storeState.preLevel3Layout as any);
-          previousPanesRef.current = panes.map((p) => p.id);
-          useWorkspaceStore.setState({ preLevel3Layout: null });
-          requestAnimationFrame(() => {
-            programmaticChangeRef.current = false;
-          });
-          return;
-        } catch {
-          // fall through to manual rebuild
-        }
-      }
-
-      // Collapsing from level 2 — restore the pre-expand layout
-      if (!storeState.expandedPaneId && storeState.preExpandLayout) {
-        try {
-          api.fromJSON(storeState.preExpandLayout as any);
-          previousPanesRef.current = panes.map((p) => p.id);
-          useWorkspaceStore.setState({ preExpandLayout: null });
-          requestAnimationFrame(() => {
-            programmaticChangeRef.current = false;
-          });
-          return;
-        } catch {
-          // fall through to manual rebuild
-        }
-      }
-
-      // Expanding into level 2 — restore saved level 2 layout if available
-      if (storeState.expandedPaneId && storeState.level2Layout) {
-        try {
-          api.fromJSON(storeState.level2Layout as any);
-          previousPanesRef.current = panes.map((p) => p.id);
-          useWorkspaceStore.setState({ level2Layout: null });
-          requestAnimationFrame(() => {
-            programmaticChangeRef.current = false;
-          });
-          return;
-        } catch {
-          // fall through to manual rebuild
-        }
-      }
-
-      // Restore saved Dockview layout if available (workspace switch)
-      const incomingWs = getActiveWorkspace(storeState);
-      if (incomingWs?.dockviewLayout && !storeState.expandedPaneId) {
-        try {
-          api.fromJSON(incomingWs.dockviewLayout as any);
+          api.fromJSON(incomingWt.dockviewLayout as any);
           previousPanesRef.current = panes.map((p) => p.id);
           requestAnimationFrame(() => {
             programmaticChangeRef.current = false;
@@ -276,6 +208,7 @@ export function TerminalGrid() {
         }
       }
 
+      // Full rebuild from pane positions
       try {
         api.clear();
       } catch {
@@ -453,7 +386,7 @@ export function TerminalGrid() {
     }
   }, [localDockviewApi, maximizedPaneId]);
 
-  // Clean up orphaned registry entries — consider ALL workspaces' panes as alive
+  // Clean up orphaned registry entries — consider ALL worktrees' panes as alive
   useEffect(() => {
     const allIds = getAllPaneIds(useWorkspaceStore.getState());
     cleanupOrphanedEntries(allIds);
@@ -465,19 +398,17 @@ export function TerminalGrid() {
       const state = useWorkspaceStore.getState();
       const api = localDockviewApi;
 
-      // Update active workspace's Dockview layout before saving.
-      // Skip when expanded — the live grid only shows a subset of panes,
-      // and persisting that would overwrite the canonical full layout.
-      let workspaces = state.workspaces;
-      const activeWsId = getActiveWorkspaceId(state);
-      if (api && activeWsId && !state.expandedPaneId) {
+      // Update active worktree's Dockview layout before saving
+      let worktrees = state.worktrees;
+      const activeWtId = getActiveWorktreeId(state);
+      if (api && activeWtId) {
         try {
           const dockviewLayout = api.toJSON();
-          const ws = workspaces[activeWsId];
-          if (ws) {
-            workspaces = {
-              ...workspaces,
-              [activeWsId]: { ...ws, dockviewLayout },
+          const wt = worktrees[activeWtId];
+          if (wt) {
+            worktrees = {
+              ...worktrees,
+              [activeWtId]: { ...wt, dockviewLayout },
             };
           }
         } catch {
@@ -485,7 +416,7 @@ export function TerminalGrid() {
         }
       }
 
-      saveLayout(state.projects, workspaces, state.activeProjectId);
+      saveLayout({ ...state, worktrees });
     }, 500);
     return () => clearTimeout(timer);
   }, [localDockviewApi, panes, maximizedPaneId]);
@@ -514,27 +445,17 @@ export function TerminalGrid() {
     [handlePanelClose],
   );
 
-  if (panes.length === 0) {
-    return <ProjectBrowser />;
-  }
-
   return (
-    <div className="relative flex-1 overflow-hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <DockviewReact
-        onReady={handleReady}
+        className="dockview-theme-abyss flex-1"
         components={components}
+        onReady={handleReady}
         disableFloatingGroups
-        className="h-full w-full"
       />
       <AnimatePresence>
         {showProjectBrowser && (
-          <ProjectBrowser
-            overlay
-            onClose={() => {
-              setShowProjectBrowser(false);
-              setChangeDirPaneId(null);
-            }}
-          />
+          <ProjectBrowser onClose={() => setShowProjectBrowser(false)} />
         )}
       </AnimatePresence>
     </div>

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DEFAULT_PROFILES } from '@/lib/profiles';
-import { useWorkspaceStore, getActiveWorkspace } from './workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from './workspace-store';
 
 // Mock tauri-shim — getPlatform has a module-level cache, so mock before import
 vi.mock('@/lib/tauri-shim', () => ({
@@ -16,18 +16,18 @@ vi.mock('@/lib/dockview-api', () => ({
 const shellId = 'system-shell';
 const claudeId = 'claude-code';
 
-/** Get the active workspace's state */
-function ws() {
-  return getActiveWorkspace(useWorkspaceStore.getState());
+/** Get the active worktree's state */
+function wt() {
+  return getActiveWorktree(useWorkspaceStore.getState());
 }
 
 function resetStore() {
   useWorkspaceStore.setState(useWorkspaceStore.getInitialState());
 }
 
-/** Ensure a project + workspace exist (needed for actions that don't auto-create) */
-function ensureWorkspace() {
-  if (!ws()) {
+/** Ensure a project + worktree exist (needed for actions that don't auto-create) */
+function ensureWorktree() {
+  if (!wt()) {
     useWorkspaceStore.getState().addProject('Test', '');
   }
 }
@@ -42,14 +42,14 @@ beforeEach(() => {
 describe('addPane', () => {
   it('adds a pane with the given profile', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const panes = ws()!.panes;
+    const panes = wt()!.panes;
     expect(panes).toHaveLength(1);
     expect(panes[0]!.profileId).toBe(shellId);
   });
 
   it('sets the new pane as active', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    expect(ws()!.activePaneId).toBe(ws()!.panes[0]!.id);
+    expect(wt()!.activePaneId).toBe(wt()!.panes[0]!.id);
   });
 
   it('adds multiple panes', () => {
@@ -57,32 +57,31 @@ describe('addPane', () => {
     addPane(shellId);
     addPane(claudeId);
     addPane(shellId);
-    expect(ws()!.panes).toHaveLength(3);
+    expect(wt()!.panes).toHaveLength(3);
   });
 
   it('sets splitFrom referencing the active pane', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
-    const firstId = ws()!.panes[0]!.id;
+    const firstId = wt()!.panes[0]!.id;
     addPane(claudeId);
-    const second = ws()!.panes[1]!;
+    const second = wt()!.panes[1]!;
     expect(second.splitFrom?.paneId).toBe(firstId);
     expect(second.splitFrom?.direction).toBe('right');
   });
 
   it('clears activePreset when adding manually', () => {
-    ensureWorkspace();
+    ensureWorktree();
     const state = useWorkspaceStore.getState();
     state.applyPreset('Side by Side', shellId);
-    expect(ws()!.activePreset).toBe('Side by Side');
+    expect(wt()!.activePreset).toBe('Side by Side');
     useWorkspaceStore.getState().addPane(shellId);
-    expect(ws()!.activePreset).toBeNull();
+    expect(wt()!.activePreset).toBeNull();
   });
 
   it('falls back to default profile for unknown profileId', () => {
     useWorkspaceStore.getState().addPane('nonexistent-profile');
-    const pane = ws()!.panes[0]!;
-    // Falls back to defaultProfile (first in DEFAULT_PROFILES)
+    const pane = wt()!.panes[0]!;
     expect(pane.title).toBe(DEFAULT_PROFILES[0]!.name);
   });
 });
@@ -94,40 +93,36 @@ describe('removePane', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
     addPane(claudeId);
-    const panes = ws()!.panes;
+    const panes = wt()!.panes;
     useWorkspaceStore.getState().removePane(panes[0]!.id);
-    expect(ws()!.panes).toHaveLength(1);
-    expect(ws()!.panes[0]!.profileId).toBe(claudeId);
+    expect(wt()!.panes).toHaveLength(1);
+    expect(wt()!.panes[0]!.profileId).toBe(claudeId);
   });
 
   it('updates activePaneId when active pane is removed', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
     addPane(claudeId);
-    const activeId = ws()!.activePaneId!;
-    // Active is the second pane (last added)
+    const activeId = wt()!.activePaneId!;
     useWorkspaceStore.getState().removePane(activeId);
-    // Should fall back to remaining pane
-    expect(ws()!.activePaneId).toBe(ws()!.panes[0]!.id);
+    expect(wt()!.activePaneId).toBe(wt()!.panes[0]!.id);
   });
 
   it('sets activePaneId to null when last pane removed', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const id = ws()!.panes[0]!.id;
+    const id = wt()!.panes[0]!.id;
     useWorkspaceStore.getState().removePane(id);
-    expect(ws()!.activePaneId).toBeNull();
-    expect(ws()!.panes).toHaveLength(0);
+    expect(wt()!.activePaneId).toBeNull();
+    expect(wt()!.panes).toHaveLength(0);
   });
 
   it('clears maximizedPaneId if the maximized pane is removed', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const id = ws()!.panes[0]!.id;
+    const id = wt()!.panes[0]!.id;
     useWorkspaceStore.getState().toggleMaximize(id);
-    // toggleMaximize with no expandedPaneId calls expandPane (Level 2)
-    expect(useWorkspaceStore.getState().expandedPaneId).toBe(id);
+    expect(wt()!.maximizedPaneId).toBe(id);
     useWorkspaceStore.getState().removePane(id);
-    // The pane is removed; expandedPaneId still set but pane is gone
-    expect(ws()!.panes).toHaveLength(0);
+    expect(wt()!.panes).toHaveLength(0);
   });
 });
 
@@ -135,71 +130,67 @@ describe('removePane', () => {
 
 describe('applyPreset', () => {
   it('creates correct number of panes for Side by Side', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('Side by Side', shellId);
-    expect(ws()!.panes).toHaveLength(2);
+    expect(wt()!.panes).toHaveLength(2);
   });
 
   it('creates correct number of panes for 2×2 Grid', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('2×2 Grid', shellId);
-    expect(ws()!.panes).toHaveLength(4);
+    expect(wt()!.panes).toHaveLength(4);
   });
 
   it('creates correct number of panes for Single', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('Single', shellId);
-    expect(ws()!.panes).toHaveLength(1);
+    expect(wt()!.panes).toHaveLength(1);
   });
 
   it('sets activePreset to the applied preset name', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('3 Column', shellId);
-    expect(ws()!.activePreset).toBe('3 Column');
+    expect(wt()!.activePreset).toBe('3 Column');
   });
 
   it('reuses existing panes when applying a larger preset', () => {
     useWorkspaceStore.getState().addPane(claudeId);
-    const existingId = ws()!.panes[0]!.id;
+    const existingId = wt()!.panes[0]!.id;
 
     useWorkspaceStore.getState().applyPreset('Side by Side', shellId);
-    const panes = ws()!.panes;
-    // First pane should be the existing one (preserved)
+    const panes = wt()!.panes;
     expect(panes[0]!.id).toBe(existingId);
     expect(panes[0]!.profileId).toBe(claudeId);
-    // Second pane is new with the specified profile
     expect(panes[1]!.profileId).toBe(shellId);
   });
 
   it('keeps extra panes when applying a smaller preset', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('2×2 Grid', shellId);
-    expect(ws()!.panes).toHaveLength(4);
+    expect(wt()!.panes).toHaveLength(4);
 
     useWorkspaceStore.getState().applyPreset('Side by Side', shellId);
-    // Existing 4 panes kept (preset only requires 2, but extras are preserved)
-    expect(ws()!.panes.length).toBeGreaterThanOrEqual(2);
+    expect(wt()!.panes.length).toBeGreaterThanOrEqual(2);
   });
 
   it('ignores unknown preset name', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const before = ws()!.panes.length;
+    const before = wt()!.panes.length;
     useWorkspaceStore.getState().applyPreset('Nonexistent', shellId);
-    expect(ws()!.panes).toHaveLength(before);
+    expect(wt()!.panes).toHaveLength(before);
   });
 
   it('increments layoutVersion', () => {
-    ensureWorkspace();
+    ensureWorktree();
     const before = useWorkspaceStore.getState().layoutVersion;
     useWorkspaceStore.getState().applyPreset('Single', shellId);
     expect(useWorkspaceStore.getState().layoutVersion).toBe(before + 1);
   });
 
   it('sets dockviewPosition on panes', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('Side by Side', shellId);
-    const panes = ws()!.panes;
-    // First pane has empty position, second references first
+    const panes = wt()!.panes;
     expect(panes[0]!.dockviewPosition).toBeDefined();
     expect(panes[1]!.dockviewPosition?.referenceId).toBe(panes[0]!.id);
     expect(panes[1]!.dockviewPosition?.direction).toBe('right');
@@ -211,29 +202,29 @@ describe('applyPreset', () => {
 describe('updatePaneProfile', () => {
   it('changes profile and title', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const paneId = ws()!.panes[0]!.id;
+    const paneId = wt()!.panes[0]!.id;
 
     useWorkspaceStore.getState().updatePaneProfile(paneId, claudeId);
-    const pane = ws()!.panes[0]!;
+    const pane = wt()!.panes[0]!;
     expect(pane.profileId).toBe(claudeId);
     expect(pane.title).toBe('Claude Code');
   });
 
   it('falls back to default profile for unknown profileId', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const paneId = ws()!.panes[0]!.id;
+    const paneId = wt()!.panes[0]!.id;
 
     useWorkspaceStore.getState().updatePaneProfile(paneId, 'bogus');
-    const pane = ws()!.panes[0]!;
+    const pane = wt()!.panes[0]!;
     expect(pane.title).toBe(DEFAULT_PROFILES[0]!.name);
   });
 
   it('clears activePreset', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('Single', shellId);
-    const paneId = ws()!.panes[0]!.id;
+    const paneId = wt()!.panes[0]!.id;
     useWorkspaceStore.getState().updatePaneProfile(paneId, claudeId);
-    expect(ws()!.activePreset).toBeNull();
+    expect(wt()!.activePreset).toBeNull();
   });
 });
 
@@ -241,13 +232,13 @@ describe('updatePaneProfile', () => {
 
 describe('clearAllPanes', () => {
   it('removes all panes and resets state', () => {
-    ensureWorkspace();
+    ensureWorktree();
     useWorkspaceStore.getState().applyPreset('2×2 Grid', shellId);
     useWorkspaceStore.getState().clearAllPanes();
-    expect(ws()!.panes).toHaveLength(0);
-    expect(ws()!.activePaneId).toBeNull();
-    expect(ws()!.activePreset).toBeNull();
-    expect(ws()!.maximizedPaneId).toBeNull();
+    expect(wt()!.panes).toHaveLength(0);
+    expect(wt()!.activePaneId).toBeNull();
+    expect(wt()!.activePreset).toBeNull();
+    expect(wt()!.maximizedPaneId).toBeNull();
   });
 });
 
@@ -258,21 +249,19 @@ describe('focus navigation', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
     addPane(claudeId);
-    const panes = ws()!.panes;
-    // Active is last added (panes[1])
+    const panes = wt()!.panes;
     useWorkspaceStore.getState().focusNextPane();
-    expect(ws()!.activePaneId).toBe(panes[0]!.id);
+    expect(wt()!.activePaneId).toBe(panes[0]!.id);
   });
 
   it('focusPrevPane wraps around', () => {
     const { addPane } = useWorkspaceStore.getState();
     addPane(shellId);
     addPane(claudeId);
-    const panes = ws()!.panes;
-    // Set active to first pane
+    const panes = wt()!.panes;
     useWorkspaceStore.getState().setActivePaneId(panes[0]!.id);
     useWorkspaceStore.getState().focusPrevPane();
-    expect(ws()!.activePaneId).toBe(panes[1]!.id);
+    expect(wt()!.activePaneId).toBe(panes[1]!.id);
   });
 
   it('focusPaneByIndex selects correct pane', () => {
@@ -280,43 +269,42 @@ describe('focus navigation', () => {
     addPane(shellId);
     addPane(claudeId);
     addPane(shellId);
-    const panes = ws()!.panes;
+    const panes = wt()!.panes;
     useWorkspaceStore.getState().focusPaneByIndex(1);
-    expect(ws()!.activePaneId).toBe(panes[1]!.id);
+    expect(wt()!.activePaneId).toBe(panes[1]!.id);
   });
 
   it('focusPaneByIndex does nothing for out-of-range index', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const before = ws()!.activePaneId;
+    const before = wt()!.activePaneId;
     useWorkspaceStore.getState().focusPaneByIndex(99);
-    expect(ws()!.activePaneId).toBe(before);
+    expect(wt()!.activePaneId).toBe(before);
   });
 });
 
-// ── renameWorkspaceTab ──
+// ── renameWorktreeTab ──
 
-describe('renameWorkspaceTab', () => {
-  it('updates workspace name', () => {
+describe('renameWorktreeTab', () => {
+  it('updates worktree name', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const wsId = ws()!.id;
-    useWorkspaceStore.getState().renameWorkspaceTab(wsId, 'My Agents');
-    expect(ws()!.name).toBe('My Agents');
+    const wtId = wt()!.id;
+    useWorkspaceStore.getState().renameWorktreeTab(wtId, 'My Agents');
+    expect(wt()!.name).toBe('My Agents');
   });
 });
 
 // ── toggleMaximize ──
 
 describe('toggleMaximize', () => {
-  it('sets expandedPaneId on first toggle, clears on second', () => {
+  it('sets maximizedPaneId on first toggle, clears on second', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const id = ws()!.panes[0]!.id;
+    const id = wt()!.panes[0]!.id;
 
     useWorkspaceStore.getState().toggleMaximize(id);
-    expect(useWorkspaceStore.getState().expandedPaneId).toBe(id);
+    expect(wt()!.maximizedPaneId).toBe(id);
 
-    // Second toggle while expanded enters level 3
     useWorkspaceStore.getState().toggleMaximize(id);
-    expect(useWorkspaceStore.getState().level3PaneId).toBe(id);
+    expect(wt()!.maximizedPaneId).toBeNull();
   });
 });
 
@@ -324,21 +312,20 @@ describe('toggleMaximize', () => {
 
 describe('addPaneWithCwd', () => {
   it('adds a pane with the specified cwd', () => {
-    // Need a workspace first
     useWorkspaceStore.getState().addPane(shellId);
     useWorkspaceStore.getState().addPaneWithCwd(shellId, 'C:\\Projects\\app');
-    const pane = ws()!.panes[1]!;
+    const pane = wt()!.panes[1]!;
     expect(pane.profileId).toBe(shellId);
     expect(pane.cwd).toBe('C:\\Projects\\app');
   });
 
   it('sets splitFrom referencing the active pane', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const firstId = ws()!.panes[0]!.id;
+    const firstId = wt()!.panes[0]!.id;
     useWorkspaceStore
       .getState()
       .addPaneWithCwd(claudeId, '/home/user', 'below');
-    const second = ws()!.panes[1]!;
+    const second = wt()!.panes[1]!;
     expect(second.splitFrom?.paneId).toBe(firstId);
     expect(second.splitFrom?.direction).toBe('below');
   });
@@ -367,9 +354,9 @@ describe('setPendingCwd / clearPendingCwd', () => {
 describe('updatePaneColor', () => {
   it('sets a color override on the pane', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const id = ws()!.panes[0]!.id;
+    const id = wt()!.panes[0]!.id;
     useWorkspaceStore.getState().updatePaneColor(id, '#ff0000');
-    expect(ws()!.panes[0]!.colorOverride).toBe('#ff0000');
+    expect(wt()!.panes[0]!.colorOverride).toBe('#ff0000');
   });
 });
 
@@ -383,7 +370,6 @@ describe('updateProfileColor', () => {
       .profiles.find((p) => p.id === shellId);
     expect(profile?.color).toBe('#00ff00');
 
-    // Check localStorage persistence
     const stored = JSON.parse(
       localStorage.getItem('agent-grid:profile-colors') ?? '{}',
     ) as Record<string, string>;
@@ -436,20 +422,21 @@ describe('simple setters', () => {
 // ── Project actions ──
 
 describe('project actions', () => {
-  it('addProject creates a project with a default workspace', () => {
+  it('addProject creates a project with a default worktree', () => {
     useWorkspaceStore.getState().addProject('My Project', '/path/to/project');
     const state = useWorkspaceStore.getState();
     expect(state.projects).toHaveLength(1);
     expect(state.projects[0]!.name).toBe('My Project');
     expect(state.projects[0]!.path).toBe('/path/to/project');
-    expect(Object.keys(state.workspaces)).toHaveLength(1);
+    expect(Object.keys(state.worktrees)).toHaveLength(1);
     expect(state.activeProjectId).toBe(state.projects[0]!.id);
+    expect(state.openProjectIds).toContain(state.projects[0]!.id);
     expect(state.currentLevel).toBe(2);
   });
 
   it('setMainPane sets the main pane for the active project', () => {
     useWorkspaceStore.getState().addPane(shellId);
-    const paneId = ws()!.panes[0]!.id;
+    const paneId = wt()!.panes[0]!.id;
     useWorkspaceStore.getState().setMainPane(paneId);
     const project = useWorkspaceStore
       .getState()
@@ -460,43 +447,42 @@ describe('project actions', () => {
   });
 });
 
-// ── Worktree workspace ──
+// ── Worktree tab creation ──
 
-describe('addWorktreeWorkspace', () => {
-  it('clones panes from current workspace with new cwd', () => {
+describe('createWorktreeFromGit', () => {
+  it('creates a new worktree tab with cloned panes', () => {
     useWorkspaceStore.getState().addProject('My Project', '/repo');
+    // addProject creates 1 initial pane; add 2 more for 3 total
     useWorkspaceStore.getState().addPane(shellId);
     useWorkspaceStore.getState().addPane(shellId);
-    const originalPanes = ws()!.panes;
-    expect(originalPanes).toHaveLength(2);
+    const originalPanes = wt()!.panes;
+    expect(originalPanes).toHaveLength(3);
 
-    const wsId = useWorkspaceStore
+    const wtId = useWorkspaceStore
       .getState()
-      .addWorktreeWorkspace('/repo-wt', 'feat/branch');
+      .createWorktreeFromGit('/repo-wt', 'feat/branch');
 
     const state = useWorkspaceStore.getState();
-    const newWs = state.workspaces[wsId];
-    expect(newWs).toBeDefined();
-    expect(newWs!.worktreePath).toBe('/repo-wt');
-    expect(newWs!.worktreeBranch).toBe('feat/branch');
-    expect(newWs!.panes).toHaveLength(2);
+
+    // Should create a new worktree tab
+    const newWt = state.worktrees[wtId];
+    expect(newWt).toBeDefined();
+    expect(newWt!.branch).toBe('feat/branch');
+    expect(newWt!.cwd).toBe('/repo-wt');
+    expect(newWt!.panes).toHaveLength(3);
 
     // Panes should have new IDs but same profiles
-    for (let i = 0; i < newWs!.panes.length; i++) {
-      expect(newWs!.panes[i]!.id).not.toBe(originalPanes[i]!.id);
-      expect(newWs!.panes[i]!.profileId).toBe(originalPanes[i]!.profileId);
-      expect(newWs!.panes[i]!.cwd).toBe('/repo-wt');
+    for (let i = 0; i < newWt!.panes.length; i++) {
+      expect(newWt!.panes[i]!.id).not.toBe(originalPanes[i]!.id);
+      expect(newWt!.panes[i]!.profileId).toBe(originalPanes[i]!.profileId);
+      expect(newWt!.panes[i]!.cwd).toBe('/repo-wt');
     }
-
-    // Should switch to the new workspace
-    const project = state.projects.find((p) => p.id === state.activeProjectId);
-    expect(project?.activeWorkspaceId).toBe(wsId);
   });
 
   it('returns empty string when no project exists', () => {
     const result = useWorkspaceStore
       .getState()
-      .addWorktreeWorkspace('/repo-wt', 'branch');
+      .createWorktreeFromGit('/repo-wt', 'branch');
     expect(result).toBe('');
   });
 });
@@ -521,8 +507,8 @@ describe('restoreLayout', () => {
 
     const result = useWorkspaceStore.getState().restoreLayout();
     expect(result).toBe(true);
-    expect(ws()!.panes).toHaveLength(2);
-    expect(ws()!.activePaneId).toBe('p2');
+    expect(wt()!.panes).toHaveLength(2);
+    expect(wt()!.activePaneId).toBe('p2');
   });
 
   it('returns false for empty localStorage', () => {
@@ -545,7 +531,7 @@ describe('restoreLayout', () => {
       }),
     );
     useWorkspaceStore.getState().restoreLayout();
-    const panes = ws()!.panes;
+    const panes = wt()!.panes;
     expect(panes).toHaveLength(1);
     expect(panes[0]!.id).toBe('valid');
   });
@@ -598,6 +584,7 @@ describe('initProjectsPath', () => {
 
   it('skips if projectsPath already set', async () => {
     useWorkspaceStore.getState().setProjectsPath('/already/set');
+    useWorkspaceStore.getState().setRootFolderPath('/already/set');
     await useWorkspaceStore.getState().initProjectsPath();
     expect(useWorkspaceStore.getState().projectsPath).toBe('/already/set');
   });
@@ -624,22 +611,19 @@ describe('custom layouts', () => {
   });
 
   it('applyCustomLayout restores panes from named layout', () => {
-    // Create and save a layout
     useWorkspaceStore.getState().addPane(shellId);
     useWorkspaceStore.getState().addPane(claudeId);
     useWorkspaceStore.getState().saveCustomLayout('Saved');
     const layout = useWorkspaceStore.getState().customLayouts[0]!;
 
-    // Clear and reapply
     useWorkspaceStore.getState().clearAllPanes();
-    expect(ws()!.panes).toHaveLength(0);
+    expect(wt()!.panes).toHaveLength(0);
 
     useWorkspaceStore.getState().applyCustomLayout(layout);
-    expect(ws()!.panes).toHaveLength(2);
+    expect(wt()!.panes).toHaveLength(2);
   });
 
   it('applyCustomLayout skips panes with invalid profiles', () => {
-    // Need a workspace to exist first
     useWorkspaceStore.getState().addPane(shellId);
     const layout = {
       id: 'test',
@@ -663,7 +647,7 @@ describe('custom layouts', () => {
       savedAt: new Date().toISOString(),
     };
     useWorkspaceStore.getState().applyCustomLayout(layout);
-    expect(ws()!.panes).toHaveLength(1);
+    expect(wt()!.panes).toHaveLength(1);
   });
 });
 
@@ -672,21 +656,18 @@ describe('custom layouts', () => {
 describe('focus navigation — edge cases', () => {
   it('focusNextPane does nothing with no panes', () => {
     useWorkspaceStore.getState().focusNextPane();
-    // No workspace exists, should not crash
   });
 
   it('focusPrevPane does nothing with no panes', () => {
     useWorkspaceStore.getState().focusPrevPane();
-    // No workspace exists, should not crash
   });
 
   it('focusNextPane selects first pane when activePaneId is stale', () => {
     useWorkspaceStore.getState().addPane(shellId);
     useWorkspaceStore.getState().addPane(shellId);
-    // Set active to a deleted ID via workspace update
     useWorkspaceStore.getState().setActivePaneId('deleted-id');
     useWorkspaceStore.getState().focusNextPane();
-    expect(ws()!.activePaneId).toBe(ws()!.panes[0]!.id);
+    expect(wt()!.activePaneId).toBe(wt()!.panes[0]!.id);
   });
 
   it('focusPrevPane selects last pane when activePaneId is stale', () => {
@@ -695,7 +676,7 @@ describe('focus navigation — edge cases', () => {
     addPane(claudeId);
     useWorkspaceStore.getState().setActivePaneId('deleted-id');
     useWorkspaceStore.getState().focusPrevPane();
-    const panes = ws()!.panes;
-    expect(ws()!.activePaneId).toBe(panes[panes.length - 1]!.id);
+    const panes = wt()!.panes;
+    expect(wt()!.activePaneId).toBe(panes[panes.length - 1]!.id);
   });
 });

@@ -1,28 +1,86 @@
 /**
- * Layout persistence — save/restore projects + workspaces to localStorage.
+ * Layout persistence — save/restore projects + worktrees to localStorage.
  */
 
-import type { Pane, Project, ProjectWorkspace, WorkspaceTab } from '@/types';
+import type { Pane, Project, WorktreeTab } from '@/types';
 import { generateId } from '@/lib/utils';
 
 const STORAGE_KEY = 'agent-grid:layout';
 const NAMED_LAYOUTS_KEY = 'agent-grid:named-layouts';
 
+/* ── V4 format (projects + worktree tabs + dashboard) ── */
+
+interface SavedLayoutV4 {
+  version: 4;
+  projects: Project[];
+  worktrees: Record<string, WorktreeTab>;
+  openProjectIds: string[];
+  activeProjectId: string | null;
+  currentLevel: 1 | 2 | 3;
+  dashboardLayout: unknown;
+  rootFolderPath: string | null;
+  savedAt: string;
+}
+
 /* ── V3 format (projects + flat workspace map) ── */
+
+// Legacy V3 types for migration only
+interface LegacyProjectV3 {
+  id: string;
+  name: string;
+  path: string;
+  mainPaneId: string | null;
+  workspaceIds: string[];
+  activeWorkspaceId: string;
+  parentProjectId?: string;
+  worktreeBranch?: string;
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface LegacyWorkspaceV3 {
+  id: string;
+  projectId: string;
+  name: string;
+  cwd?: string;
+  panes: Pane[];
+  activePaneId: string | null;
+  maximizedPaneId: string | null;
+  activePreset: string | null;
+  dockviewLayout: unknown;
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 interface SavedLayoutV3 {
   version: 3;
-  projects: Project[];
-  workspaces: Record<string, ProjectWorkspace>;
+  projects: LegacyProjectV3[];
+  workspaces: Record<string, LegacyWorkspaceV3>;
   activeProjectId: string | null;
   savedAt: string;
 }
 
 /* ── V2 format (workspace tabs) ── */
 
+interface LegacyWorkspaceTab {
+  id: string;
+  name: string;
+  color?: string;
+  cwd?: string;
+  panes: Pane[];
+  activePaneId: string | null;
+  maximizedPaneId: string | null;
+  activePreset: string | null;
+  dockviewLayout: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface SavedLayoutV2 {
   version: 2;
-  workspaces: WorkspaceTab[];
+  workspaces: LegacyWorkspaceTab[];
   activeWorkspaceId: string | null;
   savedAt: string;
 }
@@ -38,14 +96,15 @@ interface SavedLayoutV1 {
   savedAt: string;
 }
 
+/* ── Migrations ── */
+
 function migrateV1toV2(v1: SavedLayoutV1): SavedLayoutV2 {
-  // Strip any 'mode' field from panes (v1 had PaneMode)
   const panes: Pane[] = v1.panes.map((p: any) => {
     const { mode: _, ...rest } = p as Pane & { mode?: string };
     return rest;
   });
 
-  const ws: WorkspaceTab = {
+  const ws: LegacyWorkspaceTab = {
     id: generateId(),
     name: 'Default',
     panes,
@@ -69,15 +128,15 @@ function migrateV2toV3(v2: SavedLayoutV2): SavedLayoutV3 {
   const projectId = generateId();
   const now = new Date().toISOString();
 
-  const workspaces: Record<string, ProjectWorkspace> = {};
+  const workspaces: Record<string, LegacyWorkspaceV3> = {};
   const wsIds: string[] = [];
 
   for (const wsTab of v2.workspaces) {
-    const pw: ProjectWorkspace = {
+    const pw: LegacyWorkspaceV3 = {
       id: wsTab.id,
       projectId,
       name: wsTab.name,
-      worktreePath: wsTab.cwd,
+      cwd: wsTab.cwd,
       panes: wsTab.panes,
       activePaneId: wsTab.activePaneId,
       maximizedPaneId: wsTab.maximizedPaneId,
@@ -96,11 +155,10 @@ function migrateV2toV3(v2: SavedLayoutV2): SavedLayoutV3 {
       ? v2.activeWorkspaceId
       : (wsIds[0] ?? '');
 
-  // Find a main pane — use the active pane of the active workspace
   const activeWs = workspaces[activeWsId];
   const mainPaneId = activeWs?.activePaneId ?? null;
 
-  const project: Project = {
+  const project: LegacyProjectV3 = {
     id: projectId,
     name: 'Default',
     path: '',
@@ -120,16 +178,187 @@ function migrateV2toV3(v2: SavedLayoutV2): SavedLayoutV3 {
   };
 }
 
-export function saveLayout(
-  projects: Project[],
-  workspaces: Record<string, ProjectWorkspace>,
-  activeProjectId: string | null,
-): void {
-  const data: SavedLayoutV3 = {
-    version: 3,
+function migrateV3toV4(v3: SavedLayoutV3): SavedLayoutV4 {
+  const now = new Date().toISOString();
+  const worktrees: Record<string, WorktreeTab> = {};
+  const projects: Project[] = [];
+  const openProjectIds: string[] = [];
+
+  // Separate parent projects from worktree child projects
+  const parentProjects = v3.projects.filter((p) => !p.parentProjectId);
+  const childProjects = v3.projects.filter((p) => p.parentProjectId);
+
+  for (const oldProject of parentProjects) {
+    // Convert this project's workspaces to worktree tabs
+    const wtIds: string[] = [];
+
+    for (const wsId of oldProject.workspaceIds) {
+      const ws = v3.workspaces[wsId];
+      if (!ws || ws.panes.length === 0) continue;
+
+      const wt: WorktreeTab = {
+        id: ws.id,
+        projectId: oldProject.id,
+        name: ws.name === 'Default' ? 'main' : ws.name,
+        branch: 'main',
+        cwd: ws.cwd ?? oldProject.path ?? '',
+        panes: ws.panes,
+        activePaneId: ws.activePaneId,
+        maximizedPaneId: ws.maximizedPaneId,
+        activePreset: ws.activePreset,
+        dockviewLayout: ws.dockviewLayout,
+        createdAt: ws.createdAt,
+        updatedAt: ws.updatedAt,
+      };
+      worktrees[wt.id] = wt;
+      wtIds.push(wt.id);
+    }
+
+    // Convert child worktree projects into worktree tabs under this parent
+    const children = childProjects.filter(
+      (c) => c.parentProjectId === oldProject.id,
+    );
+    for (const child of children) {
+      for (const wsId of child.workspaceIds) {
+        const ws = v3.workspaces[wsId];
+        if (!ws || ws.panes.length === 0) continue;
+
+        const wt: WorktreeTab = {
+          id: ws.id,
+          projectId: oldProject.id,
+          name: child.worktreeBranch ?? child.name,
+          branch: child.worktreeBranch ?? child.name,
+          cwd: child.path ?? ws.cwd ?? '',
+          panes: ws.panes,
+          activePaneId: ws.activePaneId,
+          maximizedPaneId: ws.maximizedPaneId,
+          activePreset: ws.activePreset,
+          dockviewLayout: ws.dockviewLayout,
+          createdAt: ws.createdAt,
+          updatedAt: ws.updatedAt,
+        };
+        worktrees[wt.id] = wt;
+        wtIds.push(wt.id);
+      }
+    }
+
+    if (wtIds.length === 0) continue;
+
+    const activeWtId = wtIds.includes(oldProject.activeWorkspaceId)
+      ? oldProject.activeWorkspaceId
+      : wtIds[0]!;
+
+    const newProject: Project = {
+      id: oldProject.id,
+      name: oldProject.name,
+      path: oldProject.path,
+      mainPaneId: oldProject.mainPaneId,
+      defaultProfileId: 'system-shell',
+      worktreeIds: wtIds,
+      activeWorktreeId: activeWtId,
+      color: oldProject.color,
+      createdAt: oldProject.createdAt,
+      updatedAt: now,
+    };
+    projects.push(newProject);
+
+    // If project had panes, consider it open
+    const hasPanes = wtIds.some(
+      (id) => worktrees[id] && worktrees[id].panes.length > 0,
+    );
+    if (hasPanes) {
+      openProjectIds.push(newProject.id);
+    }
+  }
+
+  // Handle orphaned worktree projects (parent deleted) — make standalone
+  const migratedChildIds = new Set(
+    childProjects
+      .filter((c) => parentProjects.some((p) => p.id === c.parentProjectId))
+      .map((c) => c.id),
+  );
+  const orphanedChildren = childProjects.filter(
+    (c) => !migratedChildIds.has(c.id),
+  );
+  for (const orphan of orphanedChildren) {
+    const wtIds: string[] = [];
+    for (const wsId of orphan.workspaceIds) {
+      const ws = v3.workspaces[wsId];
+      if (!ws || ws.panes.length === 0) continue;
+
+      const wt: WorktreeTab = {
+        id: ws.id,
+        projectId: orphan.id,
+        name: 'main',
+        branch: orphan.worktreeBranch ?? 'main',
+        cwd: orphan.path ?? ws.cwd ?? '',
+        panes: ws.panes,
+        activePaneId: ws.activePaneId,
+        maximizedPaneId: ws.maximizedPaneId,
+        activePreset: ws.activePreset,
+        dockviewLayout: ws.dockviewLayout,
+        createdAt: ws.createdAt,
+        updatedAt: ws.updatedAt,
+      };
+      worktrees[wt.id] = wt;
+      wtIds.push(wt.id);
+    }
+
+    if (wtIds.length === 0) continue;
+
+    const newProject: Project = {
+      id: orphan.id,
+      name: orphan.name,
+      path: orphan.path,
+      mainPaneId: orphan.mainPaneId,
+      defaultProfileId: 'system-shell',
+      worktreeIds: wtIds,
+      activeWorktreeId: wtIds[0]!,
+      createdAt: orphan.createdAt,
+      updatedAt: now,
+    };
+    projects.push(newProject);
+    openProjectIds.push(newProject.id);
+  }
+
+  const activeProjectId =
+    v3.activeProjectId && projects.some((p) => p.id === v3.activeProjectId)
+      ? v3.activeProjectId
+      : (projects[0]?.id ?? null);
+
+  return {
+    version: 4,
     projects,
-    workspaces,
+    worktrees,
+    openProjectIds,
     activeProjectId,
+    currentLevel: openProjectIds.length > 0 ? 2 : 1,
+    dashboardLayout: null,
+    rootFolderPath: null,
+    savedAt: now,
+  };
+}
+
+/* ── Save / Load ── */
+
+export function saveLayout(state: {
+  projects: Project[];
+  worktrees: Record<string, WorktreeTab>;
+  openProjectIds: string[];
+  activeProjectId: string | null;
+  currentLevel: 1 | 2 | 3;
+  dashboardLayout: unknown;
+  rootFolderPath: string | null;
+}): void {
+  const data: SavedLayoutV4 = {
+    version: 4,
+    projects: state.projects,
+    worktrees: state.worktrees,
+    openProjectIds: state.openProjectIds,
+    activeProjectId: state.activeProjectId,
+    currentLevel: state.currentLevel,
+    dashboardLayout: state.dashboardLayout,
+    rootFolderPath: state.rootFolderPath,
     savedAt: new Date().toISOString(),
   };
   try {
@@ -139,7 +368,47 @@ export function saveLayout(
   }
 }
 
-/** Validate internal shape of V3 data to catch corruption */
+/** Validate internal shape of V4 data to catch corruption */
+function isValidV4(data: unknown): data is SavedLayoutV4 {
+  if (typeof data !== 'object' || data === null) return false;
+  const d = data as Record<string, unknown>;
+  if (d.version !== 4) return false;
+  if (!Array.isArray(d.projects)) return false;
+  if (
+    typeof d.worktrees !== 'object' ||
+    d.worktrees === null ||
+    Array.isArray(d.worktrees)
+  )
+    return false;
+  if (!Array.isArray(d.openProjectIds)) return false;
+
+  // Validate each project has required string fields
+  for (const p of d.projects as unknown[]) {
+    if (typeof p !== 'object' || p === null) return false;
+    const proj = p as Record<string, unknown>;
+    if (typeof proj.id !== 'string' || typeof proj.name !== 'string')
+      return false;
+    if (!Array.isArray(proj.worktreeIds)) return false;
+  }
+
+  // Validate each worktree has panes array
+  for (const wt of Object.values(d.worktrees as Record<string, unknown>)) {
+    if (typeof wt !== 'object' || wt === null) return false;
+    const w = wt as Record<string, unknown>;
+    if (typeof w.id !== 'string') return false;
+    if (!Array.isArray(w.panes)) return false;
+    for (const pane of w.panes as unknown[]) {
+      if (typeof pane !== 'object' || pane === null) return false;
+      const pa = pane as Record<string, unknown>;
+      if (typeof pa.id !== 'string' || typeof pa.profileId !== 'string')
+        return false;
+    }
+  }
+
+  return true;
+}
+
+/** Validate internal shape of V3 data */
 function isValidV3(data: unknown): data is SavedLayoutV3 {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
@@ -152,7 +421,6 @@ function isValidV3(data: unknown): data is SavedLayoutV3 {
   )
     return false;
 
-  // Validate each project has required string fields
   for (const p of d.projects as unknown[]) {
     if (typeof p !== 'object' || p === null) return false;
     const proj = p as Record<string, unknown>;
@@ -161,7 +429,6 @@ function isValidV3(data: unknown): data is SavedLayoutV3 {
     if (!Array.isArray(proj.workspaceIds)) return false;
   }
 
-  // Validate each workspace has panes array
   for (const ws of Object.values(d.workspaces as Record<string, unknown>)) {
     if (typeof ws !== 'object' || ws === null) return false;
     const w = ws as Record<string, unknown>;
@@ -178,30 +445,45 @@ function isValidV3(data: unknown): data is SavedLayoutV3 {
   return true;
 }
 
-export function loadLayout(): SavedLayoutV3 | null {
+export function loadLayout(): SavedLayoutV4 | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
 
-    // V3 format — validate internal shape
+    // V4 format
+    if (data.version === 4) {
+      if (!isValidV4(data)) return null;
+      return data;
+    }
+
+    // V3 format — migrate
     if (
       data.version === 3 &&
       Array.isArray(data.projects) &&
       typeof data.workspaces === 'object' &&
       !Array.isArray(data.workspaces)
     ) {
-      return isValidV3(data) ? data : null;
+      if (!isValidV3(data)) return null;
+      // Compat: rename worktreePath → cwd on workspaces saved before the rename
+      for (const ws of Object.values(data.workspaces as Record<string, any>)) {
+        if (ws.worktreePath !== undefined && ws.cwd === undefined) {
+          ws.cwd = ws.worktreePath;
+        }
+        delete ws.worktreePath;
+        delete ws.worktreeBranch;
+      }
+      return migrateV3toV4(data);
     }
 
-    // V2 format — migrate
+    // V2 format — migrate V2 → V3 → V4
     if (data.version === 2 && Array.isArray(data.workspaces)) {
-      return migrateV2toV3(data as SavedLayoutV2);
+      return migrateV3toV4(migrateV2toV3(data as SavedLayoutV2));
     }
 
-    // V1 format — migrate V1 → V2 → V3
+    // V1 format — migrate V1 → V2 → V3 → V4
     if (Array.isArray(data.panes)) {
-      return migrateV2toV3(migrateV1toV2(data as SavedLayoutV1));
+      return migrateV3toV4(migrateV2toV3(migrateV1toV2(data as SavedLayoutV1)));
     }
 
     return null;
@@ -220,10 +502,25 @@ export function clearSavedLayout(): void {
 
 /* ── Named layouts ── */
 
+// Named layouts still use the old WorkspaceTab format for backwards compat
+interface NamedLayoutWorkspaceTab {
+  id: string;
+  name: string;
+  color?: string;
+  cwd?: string;
+  panes: Pane[];
+  activePaneId: string | null;
+  maximizedPaneId: string | null;
+  activePreset: string | null;
+  dockviewLayout: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface NamedLayout {
   id: string;
   name: string;
-  workspaces: WorkspaceTab[];
+  workspaces: NamedLayoutWorkspaceTab[];
   savedAt: string;
 }
 
@@ -243,7 +540,7 @@ function migrateNamedLayoutV1(v1: NamedLayoutV1): NamedLayout {
     return rest;
   });
 
-  const ws: WorkspaceTab = {
+  const ws: NamedLayoutWorkspaceTab = {
     id: generateId(),
     name: 'Default',
     panes,
@@ -270,9 +567,7 @@ export function loadNamedLayouts(): NamedLayout[] {
     const data = JSON.parse(raw);
     if (!Array.isArray(data)) return [];
     return data.map((item: any) => {
-      // V2 format has 'workspaces' array
       if (Array.isArray(item.workspaces)) return item as NamedLayout;
-      // V1 format has 'panes' array
       if (Array.isArray(item.panes))
         return migrateNamedLayoutV1(item as NamedLayoutV1);
       return item as NamedLayout;

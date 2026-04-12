@@ -1,27 +1,27 @@
 import { useEffect } from 'react';
-import { useWorkspaceStore, getActiveWorkspace } from '@/store/workspace-store';
+import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 
 /**
  * Global keyboard shortcuts.
  *
  * Ctrl+T           — New shell terminal
- * Ctrl+N           — New workspace tab
+ * Ctrl+N           — Open worktree dialog (level 3)
  * Ctrl+W           — Close active pane
  * Ctrl+K           — Toggle project browser
  * Ctrl+Tab / Ctrl+] — Focus next pane
  * Ctrl+Shift+Tab / Ctrl+[ — Focus previous pane
- * Ctrl+PgDown      — Next workspace tab
- * Ctrl+PgUp        — Previous workspace tab
+ * Ctrl+PgDown      — Next worktree tab
+ * Ctrl+PgUp        — Previous worktree tab
  * Alt+1-9          — Focus pane by index
- * Ctrl+Enter       — Maximize/restore active pane
+ * Ctrl+Enter       — Maximize/restore active pane (level 3), drill into project (level 2)
  * Ctrl+Shift+P     — Toggle command palette
- * Escape           — Exit maximized mode, close palette, close project browser (does not navigate levels)
+ * Escape           — Go to dashboard (level 3), go to folder browser (level 2), close overlays
  */
 export function useGlobalShortcuts() {
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       const store = useWorkspaceStore.getState();
-      const ws = getActiveWorkspace(store);
+      const wt = getActiveWorktree(store);
 
       // Ctrl+Shift+Delete — Reset layout (clear localStorage and reload)
       if (e.ctrlKey && e.shiftKey && e.key === 'Delete') {
@@ -32,27 +32,31 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Escape — close command palette, exit maximize, or close project browser.
-      // Arrives here because TerminalPane's attachCustomKeyEventHandler returns false for Escape.
+      // Escape — close overlays, navigate back through levels
       if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         if (store.showCommandPalette) {
           e.preventDefault();
           store.setShowCommandPalette(false);
           return;
         }
-        if (store.level3PaneId) {
+        if (store.showWorktreeDialog) {
           e.preventDefault();
-          store.exitLevel3();
-          return;
-        }
-        if (store.expandedPaneId) {
-          e.preventDefault();
-          store.collapsePane();
+          store.setShowWorktreeDialog(false);
           return;
         }
         if (store.showProjectBrowser) {
           e.preventDefault();
           store.setShowProjectBrowser(false);
+          return;
+        }
+        if (store.currentLevel === 3) {
+          e.preventDefault();
+          store.goToDashboard();
+          return;
+        }
+        if (store.currentLevel === 2) {
+          e.preventDefault();
+          store.goToFolderBrowser();
           return;
         }
       }
@@ -64,25 +68,29 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Ctrl+T — New shell terminal (in active workspace)
+      // Ctrl+T — New shell terminal (in active worktree, level 3 only)
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 't') {
-        e.preventDefault();
-        store.addPane('system-shell', 'right');
-        return;
+        if (store.currentLevel === 3) {
+          e.preventDefault();
+          store.addPane('system-shell', 'right');
+          return;
+        }
       }
 
-      // Ctrl+N — New workspace tab
+      // Ctrl+N — Open worktree dialog (level 3 only)
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'n') {
-        e.preventDefault();
-        store.addWorkspace('Workspace');
-        return;
+        if (store.currentLevel === 3) {
+          e.preventDefault();
+          store.setShowWorktreeDialog(true);
+          return;
+        }
       }
 
       // Ctrl+W — Close active pane
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'w') {
-        if (ws && ws.panes.length > 0 && ws.activePaneId) {
+        if (wt && wt.panes.length > 0 && wt.activePaneId) {
           e.preventDefault();
-          store.removePane(ws.activePaneId);
+          store.removePane(wt.activePaneId);
           return;
         }
       }
@@ -111,17 +119,17 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Ctrl+PgDown — Next workspace tab
+      // Ctrl+PgDown — Next worktree tab
       if (e.ctrlKey && !e.shiftKey && e.key === 'PageDown') {
         e.preventDefault();
-        store.nextWorkspace();
+        store.nextWorktree();
         return;
       }
 
-      // Ctrl+PgUp — Previous workspace tab
+      // Ctrl+PgUp — Previous worktree tab
       if (e.ctrlKey && !e.shiftKey && e.key === 'PageUp') {
         e.preventDefault();
-        store.prevWorkspace();
+        store.prevWorktree();
         return;
       }
 
@@ -154,11 +162,11 @@ export function useGlobalShortcuts() {
         return;
       }
 
-      // Ctrl+Enter — Maximize/restore active pane
+      // Ctrl+Enter — Maximize/restore (level 3), focus project (level 2)
       if (e.ctrlKey && e.key === 'Enter') {
         e.preventDefault();
-        if (ws?.activePaneId) {
-          store.toggleMaximize(ws.activePaneId);
+        if (store.currentLevel === 3 && wt?.activePaneId) {
+          store.toggleMaximize(wt.activePaneId);
         }
         return;
       }

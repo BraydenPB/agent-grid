@@ -1,26 +1,30 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Plus, X, GitBranch } from 'lucide-react';
+import { GitBranch, Plus, X } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   useWorkspaceStore,
-  getProjectWorkspaceList,
-  getActiveWorkspaceId,
+  getProjectWorktreeList,
+  getActiveWorktreeId,
   getActiveProject,
 } from '@/store/workspace-store';
 import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
 import { cn } from '@/lib/utils';
-import type { ProjectWorkspace } from '@/types';
+import type { WorktreeTab } from '@/types';
 
-function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
-  const isActive = useWorkspaceStore((s) => getActiveWorkspaceId(s) === ws.id);
-  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const removeWorkspace = useWorkspaceStore((s) => s.removeWorkspace);
-  const renameWorkspaceTab = useWorkspaceStore((s) => s.renameWorkspaceTab);
-  const workspaceCount = useWorkspaceStore(
-    (s) => getProjectWorkspaceList(s).length,
-  );
+function WorktreeTabItem({ wt }: { wt: WorktreeTab }) {
+  const isActive = useWorkspaceStore((s) => getActiveWorktreeId(s) === wt.id);
+  const setActiveWorktree = useWorkspaceStore((s) => s.setActiveWorktree);
+  const removeWorktreeTab = useWorkspaceStore((s) => s.removeWorktreeTab);
+  const renameWorktreeTab = useWorkspaceStore((s) => s.renameWorktreeTab);
+  const worktreeCount = useWorkspaceStore((s) => {
+    const project = getActiveProject(s);
+    return project?.worktreeIds.length ?? 0;
+  });
+
+  const isMainBranch = wt.branch === 'main' || wt.branch === 'master';
 
   const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState(ws.name);
+  const [editName, setEditName] = useState(wt.name);
   const inputRef = useRef<HTMLInputElement>(null);
   const tabRef = useRef<HTMLButtonElement>(null);
 
@@ -34,7 +38,7 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
       working: 0,
     };
     let worst: keyof typeof statusPriority = 'working';
-    for (const pane of ws.panes) {
+    for (const pane of wt.panes) {
       const status = s.statuses[pane.id] ?? 'working';
       if (statusPriority[status] > statusPriority[worst]) worst = status;
     }
@@ -44,8 +48,8 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
   const statusColor = STATUS_COLORS[worstStatus];
   const showStatus = worstStatus !== 'working' && statusColor !== 'transparent';
 
-  const accentColor = ws.color || '#3b82f6';
-  const cwdLabel = ws.worktreePath?.split(/[\\/]/).pop() || '';
+  const accentColor = '#3b82f6';
+  const cwdLabel = wt.cwd?.split(/[\\/]/).pop() || '';
 
   useEffect(() => {
     if (isActive && tabRef.current) {
@@ -66,32 +70,32 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
 
   const commitRename = useCallback(() => {
     const trimmed = editName.trim();
-    if (trimmed && trimmed !== ws.name) {
-      renameWorkspaceTab(ws.id, trimmed);
+    if (trimmed && trimmed !== wt.name) {
+      renameWorktreeTab(wt.id, trimmed);
     } else {
-      setEditName(ws.name);
+      setEditName(wt.name);
     }
     setEditing(false);
-  }, [editName, ws.id, ws.name, renameWorkspaceTab]);
+  }, [editName, wt.id, wt.name, renameWorktreeTab]);
 
   return (
     <button
       ref={tabRef}
-      onClick={() => setActiveWorkspace(ws.id)}
+      onClick={() => setActiveWorktree(wt.id)}
       onDoubleClick={() => {
-        setEditName(ws.name);
+        setEditName(wt.name);
         setEditing(true);
       }}
       onAuxClick={(e) => {
-        if (e.button === 1) {
+        if (e.button === 1 && !isMainBranch) {
           e.preventDefault();
           if (
-            ws.panes.length === 0 ||
+            wt.panes.length === 0 ||
             window.confirm(
-              `Close "${ws.name}" with ${ws.panes.length} terminal${ws.panes.length !== 1 ? 's' : ''}?`,
+              `Close "${wt.name}" with ${wt.panes.length} terminal${wt.panes.length !== 1 ? 's' : ''}?`,
             )
           ) {
-            removeWorkspace(ws.id);
+            removeWorktreeTab(wt.id);
           }
         }
       }}
@@ -103,7 +107,7 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
           ? 'bg-white/[0.06] text-zinc-200'
           : 'bg-transparent text-zinc-500 hover:bg-white/[0.03] hover:text-zinc-400',
       )}
-      title={`${ws.name}${cwdLabel ? ` — ${ws.worktreePath}` : ''} (${ws.panes.length} pane${ws.panes.length !== 1 ? 's' : ''})`}
+      title={`${wt.name}${cwdLabel ? ` — ${wt.cwd}` : ''} (${wt.panes.length} pane${wt.panes.length !== 1 ? 's' : ''})`}
     >
       {/* Active indicator — colored top border */}
       {isActive && (
@@ -121,7 +125,10 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
         />
       )}
 
-      {/* Workspace name (editable) */}
+      {/* Branch icon */}
+      <GitBranch size={10} strokeWidth={2} className="shrink-0 text-zinc-600" />
+
+      {/* Worktree name (editable) */}
       {editing ? (
         <input
           ref={inputRef}
@@ -131,7 +138,7 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitRename();
             if (e.key === 'Escape') {
-              setEditName(ws.name);
+              setEditName(wt.name);
               setEditing(false);
             }
           }}
@@ -141,25 +148,12 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
         />
       ) : (
         <span className="max-w-[100px] truncate text-[11px] leading-none font-medium">
-          {ws.name}
-        </span>
-      )}
-
-      {/* Branch indicator */}
-      {ws.worktreeBranch && (
-        <span
-          className={cn(
-            'flex items-center gap-0.5 text-[9px]',
-            isActive ? 'text-zinc-500' : 'text-zinc-700',
-          )}
-        >
-          <GitBranch size={9} strokeWidth={2} />
-          <span className="max-w-[60px] truncate">{ws.worktreeBranch}</span>
+          {wt.name}
         </span>
       )}
 
       {/* Pane count badge */}
-      {ws.panes.length > 0 && (
+      {wt.panes.length > 0 && (
         <span
           className={cn(
             'rounded-full px-1.5 text-[9px] leading-none font-medium tabular-nums',
@@ -168,30 +162,30 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
               : 'bg-white/[0.04] text-zinc-600',
           )}
         >
-          {ws.panes.length}
+          {wt.panes.length}
         </span>
       )}
 
-      {/* Close button */}
-      {workspaceCount > 1 && (
+      {/* Close button — hidden for main branch */}
+      {worktreeCount > 1 && !isMainBranch && (
         <span
           role="button"
           tabIndex={-1}
           onClick={(e) => {
             e.stopPropagation();
             if (
-              ws.panes.length === 0 ||
+              wt.panes.length === 0 ||
               window.confirm(
-                `Close "${ws.name}" with ${ws.panes.length} terminal${ws.panes.length !== 1 ? 's' : ''}?`,
+                `Close "${wt.name}" with ${wt.panes.length} terminal${wt.panes.length !== 1 ? 's' : ''}?`,
               )
             ) {
-              removeWorkspace(ws.id);
+              removeWorktreeTab(wt.id);
             }
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.stopPropagation();
-              removeWorkspace(ws.id);
+              removeWorktreeTab(wt.id);
             }
           }}
           className={cn(
@@ -209,15 +203,13 @@ function WorkspaceTabItem({ ws }: { ws: ProjectWorkspace }) {
   );
 }
 
-export function TabStrip() {
-  const workspaces = useWorkspaceStore(getProjectWorkspaceList);
-  const addWorkspace = useWorkspaceStore((s) => s.addWorkspace);
+export function WorktreeTabStrip() {
+  const worktrees = useWorkspaceStore(useShallow(getProjectWorktreeList));
   const setShowWorktreeDialog = useWorkspaceStore(
     (s) => s.setShowWorktreeDialog,
   );
-  const hasProjectPath = useWorkspaceStore((s) => !!getActiveProject(s)?.path);
 
-  if (workspaces.length === 0) return null;
+  if (worktrees.length === 0) return null;
 
   return (
     <div
@@ -228,37 +220,22 @@ export function TabStrip() {
       )}
       style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
     >
-      {workspaces.map((ws) => (
-        <WorkspaceTabItem key={ws.id} ws={ws} />
+      {worktrees.map((wt) => (
+        <WorktreeTabItem key={wt.id} wt={wt} />
       ))}
 
-      {/* Add workspace button */}
+      {/* Add worktree button */}
       <button
-        onClick={() => addWorkspace('Workspace')}
+        onClick={() => setShowWorktreeDialog(true)}
         className={cn(
           'flex h-full shrink-0 items-center px-2.5',
           'text-zinc-700 transition-colors duration-100',
           'hover:bg-white/[0.03] hover:text-zinc-400',
         )}
-        title="New workspace (Ctrl+N)"
+        title="New worktree"
       >
         <Plus size={13} strokeWidth={2} />
       </button>
-
-      {/* New worktree button */}
-      {hasProjectPath && (
-        <button
-          onClick={() => setShowWorktreeDialog(true)}
-          className={cn(
-            'flex h-full shrink-0 items-center gap-1 px-2.5',
-            'text-zinc-700 transition-colors duration-100',
-            'hover:bg-white/[0.03] hover:text-zinc-400',
-          )}
-          title="New worktree"
-        >
-          <GitBranch size={11} strokeWidth={2} />
-        </button>
-      )}
     </div>
   );
 }
