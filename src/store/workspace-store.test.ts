@@ -447,6 +447,41 @@ describe('project actions', () => {
   });
 });
 
+// ── focusProjectPane — cross-project state corruption prevention ──
+
+describe('focusProjectPane', () => {
+  it('sets activeProjectId and the target worktrees activePaneId atomically', () => {
+    const idA = useWorkspaceStore.getState().addProject('A', '/a');
+    const paneAId = wt()!.panes[0]!.id;
+
+    const idB = useWorkspaceStore.getState().addProject('B', '/b');
+    const paneBId = wt()!.panes[0]!.id;
+
+    // Now A is not active (B is). Focus A's tile on dashboard.
+    useWorkspaceStore.getState().focusProjectPane(idA, paneAId);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.activeProjectId).toBe(idA);
+    const projectA = state.projects.find((p) => p.id === idA)!;
+    const projectB = state.projects.find((p) => p.id === idB)!;
+    expect(state.worktrees[projectA.activeWorktreeId]!.activePaneId).toBe(
+      paneAId,
+    );
+    // Critically: B's activePaneId was NOT corrupted by A's pane ID
+    expect(state.worktrees[projectB.activeWorktreeId]!.activePaneId).toBe(
+      paneBId,
+    );
+  });
+
+  it('does nothing for a non-existent project', () => {
+    const idA = useWorkspaceStore.getState().addProject('A', '/a');
+    const before = useWorkspaceStore.getState().activeProjectId;
+    useWorkspaceStore.getState().focusProjectPane('nonexistent', 'x');
+    expect(useWorkspaceStore.getState().activeProjectId).toBe(before);
+    expect(idA).toBe(before); // sanity
+  });
+});
+
 // ── Worktree tab creation ──
 
 describe('createWorktreeFromGit', () => {

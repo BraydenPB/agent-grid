@@ -244,6 +244,12 @@ export interface WorkspaceState {
   openProject: (id: string) => void;
   closeProject: (id: string) => void;
   focusProject: (id: string) => void;
+  /**
+   * Focus a specific project + pane atomically. Used by the dashboard to
+   * avoid cross-project state corruption (setting activePaneId on the
+   * wrong worktree when clicking a non-active project's tile).
+   */
+  focusProjectPane: (projectId: string, paneId: string) => void;
   goToFolderBrowser: () => void;
   goToDashboard: () => void;
   setMainPane: (paneId: string) => void;
@@ -556,6 +562,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
   },
 
+  focusProjectPane: (projectId, paneId) => {
+    // Atomically set activeProjectId AND the target worktree's activePaneId.
+    // Used by the dashboard to avoid writing pane state into the wrong
+    // worktree when clicking a non-active project's tile.
+    const state = get();
+    const project = state.projects.find((p) => p.id === projectId);
+    if (!project) return;
+    set((s) => ({
+      activeProjectId: projectId,
+      worktrees: updateWorktreeById(s.worktrees, project.activeWorktreeId, {
+        activePaneId: paneId,
+      }),
+    }));
+  },
+
   goToFolderBrowser: () => {
     const state = get();
     const dockviewLayout = captureOutgoingLayout();
@@ -723,6 +744,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }),
       layoutVersion: s.layoutVersion + 1,
     }));
+
+    // Flush to localStorage — worktree tab deletion should persist
+    saveLayout(get());
   },
 
   setActiveWorktree: (id) => {
@@ -747,10 +771,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     saveLayout(s);
   },
 
-  renameWorktreeTab: (id, name) =>
+  renameWorktreeTab: (id, name) => {
     set((s) => ({
       worktrees: updateWorktreeById(s.worktrees, id, { name }),
-    })),
+    }));
+    // Flush to localStorage — rename should persist across restarts
+    saveLayout(get());
+  },
 
   nextWorktree: () => {
     const state = get();

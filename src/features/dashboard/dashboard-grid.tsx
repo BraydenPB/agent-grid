@@ -43,7 +43,9 @@ function DashboardTile({ project, mainPane }: DashboardTileProps) {
   const profiles = useWorkspaceStore((s) => s.profiles);
   const closeProject = useWorkspaceStore((s) => s.closeProject);
   const focusProject = useWorkspaceStore((s) => s.focusProject);
-  const setActivePaneId = useWorkspaceStore((s) => s.setActivePaneId);
+  const focusProjectPane = useWorkspaceStore((s) => s.focusProjectPane);
+  const activeProjectId = useWorkspaceStore((s) => s.activeProjectId);
+  const isFocusedTile = activeProjectId === project.id;
 
   const profile =
     profiles.find((p) => p.id === mainPane?.profileId) ??
@@ -60,9 +62,11 @@ function DashboardTile({ project, mainPane }: DashboardTileProps) {
     <div
       className={cn(
         'group relative flex min-h-0 min-w-0 flex-col overflow-hidden',
-        'border border-white/[0.06] bg-[#0a0a0f]',
-        'hover:border-white/[0.10]',
+        'border bg-[#0a0a0f]',
         'transition-colors duration-150',
+        isFocusedTile
+          ? 'border-blue-500/40'
+          : 'border-white/[0.06] hover:border-white/[0.10]',
       )}
     >
       {/* Header bar */}
@@ -127,8 +131,8 @@ function DashboardTile({ project, mainPane }: DashboardTileProps) {
             paneId={mainPane.id}
             profile={profile}
             initialCwd={mainPane.cwd ?? project.path}
-            isActive={false}
-            onFocus={() => setActivePaneId(mainPane.id)}
+            isActive={isFocusedTile}
+            onFocus={() => focusProjectPane(project.id, mainPane.id)}
             onClose={() => closeProject(project.id)}
           />
         ) : (
