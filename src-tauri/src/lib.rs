@@ -370,6 +370,19 @@ fn create_worktree(cwd: String, branch: String, path: String) -> Result<String, 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Workaround: tauri-plugin-pty v0.2.1 issues `std::io::Read::read()`
+    // synchronously inside `async fn read`, parking a tokio worker thread for
+    // each active PTY. With the default `num_cpus` workers, opening more
+    // terminals than CPU cores leaves later panes with no output.
+    // Upstream: https://github.com/Tnze/tauri-plugin-pty/issues/2
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(32)
+        .max_blocking_threads(512)
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime");
+    tauri::async_runtime::set(runtime.handle().clone());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
