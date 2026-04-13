@@ -16,16 +16,16 @@ Run Claude Code, Codex, Gemini CLI, Aider, OpenCode, or any CLI tool side-by-sid
 
 ## Stack
 
-| Layer | Technology |
-|-------|-----------|
+| Layer     | Technology                                                       |
+| --------- | ---------------------------------------------------------------- |
 | Framework | [Tauri v2](https://v2.tauri.app) (Rust backend + system WebView) |
-| Frontend | React 19 + TypeScript |
-| Terminal | [xterm.js](https://xtermjs.org) with WebGL renderer |
-| PTY | [tauri-plugin-pty](https://github.com/Tnze/tauri-plugin-pty) |
-| State | [Zustand](https://zustand.docs.pmnd.rs) |
-| Layout | [react-grid-layout](https://github.com/react-grid-layout/react-grid-layout) |
-| Styling | [Tailwind CSS v4](https://tailwindcss.com) |
-| Icons | [Lucide](https://lucide.dev) |
+| Frontend  | React 19 + TypeScript                                            |
+| Terminal  | [xterm.js](https://xtermjs.org) with WebGL renderer              |
+| PTY       | [tauri-plugin-pty](https://github.com/Tnze/tauri-plugin-pty)     |
+| State     | [Zustand](https://zustand.docs.pmnd.rs)                          |
+| Layout    | [Dockview](https://dockview.dev) (IDE-style docking)             |
+| Styling   | [Tailwind CSS v4](https://tailwindcss.com)                       |
+| Icons     | [Lucide](https://lucide.dev)                                     |
 
 ## Getting Started
 
@@ -38,11 +38,13 @@ Run Claude Code, Codex, Gemini CLI, Aider, OpenCode, or any CLI tool side-by-sid
 ### Install & Run
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/agent-grid.git
+git clone https://github.com/BraydenPB/agent-grid.git
 cd agent-grid
 npm install
 npm run tauri dev
 ```
+
+Pre-built binaries are published on the [Releases](https://github.com/BraydenPB/agent-grid/releases) page.
 
 ### Build for Production
 
@@ -77,6 +79,7 @@ agent-grid/
 ## Roadmap
 
 ### MVP (current)
+
 - [x] Configurable terminal grid (drag + resize)
 - [x] PTY-backed terminal panes
 - [x] Built-in profiles for AI coding tools
@@ -86,6 +89,7 @@ agent-grid/
 - [ ] Custom profile editor
 
 ### Studio Phase
+
 - [ ] Drag-and-drop panel system (Agent, Browser, Notes, Code Editor)
 - [ ] Monaco code editor panel
 - [ ] Git diff viewer panel
@@ -93,12 +97,14 @@ agent-grid/
 - [ ] Task/Kanban panel
 
 ### Cluster Phase
+
 - [ ] Multi-agent orchestration layer
 - [ ] Auto task queuing + skill-based assignment
 - [ ] Native git worktree isolation per agent
 - [ ] Real-time inter-agent collaboration
 
 ### Ecosystem
+
 - [ ] Local LLM support (Ollama integration)
 - [ ] GitHub / Linear / Obsidian connectors
 - [ ] Plugin marketplace
