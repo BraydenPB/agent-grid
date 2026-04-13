@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
+import { zoomTerminalFont, resetTerminalFont } from '@/lib/terminal-registry';
 
 /**
  * Global keyboard shortcuts.
@@ -15,6 +16,9 @@ import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
  * Alt+1-9          — Focus pane by index
  * Ctrl+Enter       — Maximize/restore active pane (level 3), drill into project (level 2)
  * Ctrl+Shift+P     — Toggle command palette
+ * Ctrl+= / Ctrl++  — Zoom active terminal in
+ * Ctrl+-           — Zoom active terminal out
+ * Ctrl+0           — Reset active terminal font size
  * Escape           — Go to dashboard (level 3), go to folder browser (level 2), close overlays
  */
 export function useGlobalShortcuts() {
@@ -22,6 +26,34 @@ export function useGlobalShortcuts() {
     function handler(e: KeyboardEvent) {
       const store = useWorkspaceStore.getState();
       const wt = getActiveWorktree(store);
+
+      // Ctrl+= / Ctrl++ — Zoom active terminal in
+      // Ctrl+-           — Zoom active terminal out
+      // Ctrl+0           — Reset active terminal font
+      // preventDefault blocks WebView2's default page-zoom accelerator.
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && wt?.activePaneId) {
+        if (e.key === '=' || e.key === '+') {
+          if (zoomTerminalFont(wt.activePaneId, 1)) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          return;
+        }
+        if (e.key === '-') {
+          if (zoomTerminalFont(wt.activePaneId, -1)) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          return;
+        }
+        if (e.key === '0') {
+          if (resetTerminalFont(wt.activePaneId)) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          return;
+        }
+      }
 
       // Ctrl+Shift+Delete — Reset layout (clear localStorage and reload)
       if (e.ctrlKey && e.shiftKey && e.key === 'Delete') {

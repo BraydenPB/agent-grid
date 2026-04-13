@@ -7,13 +7,21 @@ import {
   getRegisteredPaneIds,
   destroyTerminalEntry,
   cleanupOrphanedEntries,
+  bufferPtyData,
+  flushWriteBuffer,
+  setTerminalVisible,
+  _MAX_HIDDEN_BUFFER_BYTES,
   type TerminalEntry,
 } from './terminal-registry';
 
 /** Create a minimal mock TerminalEntry with spy-able dispose/kill methods */
 function mockEntry(overrides: Partial<TerminalEntry> = {}): TerminalEntry {
   return {
-    terminal: { dispose: vi.fn() } as unknown as TerminalEntry['terminal'],
+    terminal: {
+      dispose: vi.fn(),
+      write: vi.fn(),
+      reset: vi.fn(),
+    } as unknown as TerminalEntry['terminal'],
     fitAddon: {} as TerminalEntry['fitAddon'],
     searchAddon: null,
     serializeAddon: null,
@@ -24,6 +32,13 @@ function mockEntry(overrides: Partial<TerminalEntry> = {}): TerminalEntry {
     fontSize: 14,
     profileId: 'system-shell',
     cwd: 'C:\\Users\\test',
+    webglAddon: null,
+    preferDomRenderer: false,
+    writeBuffer: [],
+    writeBufferSize: 0,
+    writeBufferTruncated: false,
+    isVisible: true,
+    visibilityObserver: null,
     ...overrides,
   };
 }
@@ -162,5 +177,82 @@ describe('cleanupOrphanedEntries', () => {
     cleanupOrphanedEntries(['a', 'b']);
 
     expect(getRegisteredPaneIds().sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('hidden-pane write buffering', () => {
+  it('queues data without writing to the terminal', () => {
+    const entry = mockEntry();
+    setTerminalEntry('pane-1', entry);
+
+    bufferPtyData('pane-1', new Uint8Array([1, 2, 3]));
+    bufferPtyData('pane-1', new Uint8Array([4, 5]));
+
+    expect(entry.writeBuffer.length).toBe(2);
+    expect(entry.writeBufferSize).toBe(5);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(entry.terminal.write).not.toHaveBeenCalled();
+  });
+
+  it('flushes buffered data to the terminal in order', () => {
+    const entry = mockEntry();
+    setTerminalEntry('pane-1', entry);
+
+    const a = new Uint8Array([1]);
+    const b = new Uint8Array([2]);
+    bufferPtyData('pane-1', a);
+    bufferPtyData('pane-1', b);
+
+    flushWriteBuffer('pane-1');
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(entry.terminal.write).toHaveBeenNthCalledWith(1, a);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(entry.terminal.write).toHaveBeenNthCalledWith(2, b);
+    expect(entry.writeBuffer.length).toBe(0);
+    expect(entry.writeBufferSize).toBe(0);
+  });
+
+  it('setTerminalVisible(true) flushes on hidden→visible transition', () => {
+    const entry = mockEntry({ isVisible: false });
+    setTerminalEntry('pane-1', entry);
+    bufferPtyData('pane-1', new Uint8Array([42]));
+
+    setTerminalVisible('pane-1', true);
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(entry.terminal.write).toHaveBeenCalledOnce();
+    expect(entry.writeBuffer.length).toBe(0);
+  });
+
+  it('setTerminalVisible(false) does not flush', () => {
+    const entry = mockEntry();
+    setTerminalEntry('pane-1', entry);
+    bufferPtyData('pane-1', new Uint8Array([7]));
+    // Already visible → toggling to hidden should not flush
+    setTerminalVisible('pane-1', false);
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(entry.terminal.write).not.toHaveBeenCalled();
+  });
+
+  it('truncates oldest chunks when buffer exceeds byte cap and resets on flush', () => {
+    const entry = mockEntry();
+    setTerminalEntry('pane-1', entry);
+
+    const chunkSize = 1024 * 1024; // 1MB
+    const chunks = Math.ceil(_MAX_HIDDEN_BUFFER_BYTES / chunkSize) + 2;
+    for (let i = 0; i < chunks; i++) {
+      bufferPtyData('pane-1', new Uint8Array(chunkSize));
+    }
+
+    expect(entry.writeBufferSize).toBeLessThanOrEqual(_MAX_HIDDEN_BUFFER_BYTES);
+    expect(entry.writeBufferTruncated).toBe(true);
+
+    flushWriteBuffer('pane-1');
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(entry.terminal.reset).toHaveBeenCalledOnce();
+    expect(entry.writeBufferTruncated).toBe(false);
   });
 });

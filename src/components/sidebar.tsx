@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { PanelRight, PanelBottom, Bookmark, X } from 'lucide-react';
+import { PanelRight, PanelBottom, Bookmark, X, Trash2 } from 'lucide-react';
 import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
-import { GRID_PRESETS } from '@/lib/grid-presets';
+import {
+  BUILTIN_PRESETS,
+  PresetThumbnail,
+  captureDockviewLayout,
+  useLayoutPresets,
+} from '@/features/layouts';
+import { dockviewApiRef } from '@/lib/dockview-api';
 import { cn } from '@/lib/utils';
 
 export function Sidebar() {
@@ -15,6 +21,9 @@ export function Sidebar() {
   const saveCustomLayout = useWorkspaceStore((s) => s.saveCustomLayout);
   const deleteCustomLayout = useWorkspaceStore((s) => s.deleteCustomLayout);
   const applyCustomLayout = useWorkspaceStore((s) => s.applyCustomLayout);
+  const userPresets = useLayoutPresets((s) => s.userPresets);
+  const createUserPreset = useLayoutPresets((s) => s.createUserPreset);
+  const deleteUserPreset = useLayoutPresets((s) => s.deleteUserPreset);
   const hasPanes = (activeWorktree?.panes.length ?? 0) > 0;
   const [splitDirection, setSplitDirection] = useState<'right' | 'below'>(
     'right',
@@ -23,6 +32,29 @@ export function Sidebar() {
   const [savingLayout, setSavingLayout] = useState(false);
   const [layoutName, setLayoutName] = useState('');
   const layoutNameRef = useRef<HTMLInputElement>(null);
+  const [savingShape, setSavingShape] = useState(false);
+  const [shapeName, setShapeName] = useState('');
+  const shapeNameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (savingShape) shapeNameRef.current?.focus();
+  }, [savingShape]);
+
+  function handleSaveShape(e: React.FormEvent) {
+    e.preventDefault();
+    const name = shapeName.trim();
+    if (!name) return;
+    const api = dockviewApiRef.current;
+    const tree = api ? captureDockviewLayout(api) : null;
+    if (!tree) {
+      setSavingShape(false);
+      setShapeName('');
+      return;
+    }
+    createUserPreset(name, tree, 'both');
+    setShapeName('');
+    setSavingShape(false);
+  }
 
   useEffect(() => {
     if (!hasPanes) setConfirmClear(false);
@@ -110,38 +142,143 @@ export function Sidebar() {
 
       <div className="mx-3 border-t border-zinc-800" />
 
-      {/* Layout presets */}
+      {/* Layout presets — visual thumbnails */}
       <div className="p-3">
         <h2 className="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
           Layouts
         </h2>
-        <div className="flex flex-col gap-1">
-          {GRID_PRESETS.slice(0, 6).map((preset) => (
-            <button
-              key={preset.name}
-              onClick={() => applyPreset(preset.name, 'system-shell')}
-              className={cn(
-                'flex items-center justify-between rounded-md px-2.5 py-1.5',
-                'text-sm transition-colors',
-                activePreset === preset.name
-                  ? 'bg-zinc-800 text-zinc-200'
-                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200',
-              )}
-            >
-              <span>{preset.name}</span>
-              <span
+        <div className="grid grid-cols-2 gap-1.5">
+          {BUILTIN_PRESETS.map((preset) => {
+            const isActive = activePreset === preset.name;
+            return (
+              <button
+                key={preset.id}
+                onClick={() => applyPreset(preset.name, 'system-shell')}
+                title={preset.description ?? preset.name}
                 className={cn(
-                  'text-xs',
-                  activePreset === preset.name
-                    ? 'text-zinc-400'
-                    : 'text-zinc-600',
+                  'group flex flex-col items-center gap-1 rounded-md border p-1.5 transition-colors',
+                  isActive
+                    ? 'border-blue-500/50 bg-blue-500/[0.08]'
+                    : 'border-transparent bg-zinc-800/40 hover:border-zinc-700 hover:bg-zinc-800',
                 )}
               >
-                {preset.panelCount}
-              </span>
-            </button>
-          ))}
+                <PresetThumbnail
+                  tree={preset.tree}
+                  size={36}
+                  highlighted={isActive}
+                />
+                <span
+                  className={cn(
+                    'line-clamp-1 w-full text-center text-[9px]',
+                    isActive ? 'text-blue-200' : 'text-zinc-400',
+                  )}
+                >
+                  {preset.name}
+                </span>
+              </button>
+            );
+          })}
         </div>
+
+        {/* User-saved shape presets */}
+        {userPresets.length > 0 && (
+          <div className="mt-3 border-t border-zinc-800 pt-3">
+            <h3 className="mb-1.5 text-[9px] font-semibold tracking-wider text-zinc-600 uppercase">
+              My Shapes
+            </h3>
+            <div className="grid grid-cols-2 gap-1.5">
+              {userPresets.map((preset) => {
+                const isActive = activePreset === preset.name;
+                return (
+                  <div key={preset.id} className="group relative">
+                    <button
+                      onClick={() => {
+                        applyPreset(preset.name, 'system-shell');
+                      }}
+                      title={preset.name}
+                      className={cn(
+                        'flex w-full flex-col items-center gap-1 rounded-md border p-1.5 transition-colors',
+                        isActive
+                          ? 'border-blue-500/50 bg-blue-500/[0.08]'
+                          : 'border-transparent bg-zinc-800/40 hover:border-zinc-700 hover:bg-zinc-800',
+                      )}
+                    >
+                      <PresetThumbnail
+                        tree={preset.tree}
+                        size={36}
+                        highlighted={isActive}
+                      />
+                      <span
+                        className={cn(
+                          'line-clamp-1 w-full text-center text-[9px]',
+                          isActive ? 'text-blue-200' : 'text-zinc-400',
+                        )}
+                      >
+                        {preset.name}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => deleteUserPreset(preset.id)}
+                      className="absolute top-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded bg-zinc-900/90 text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-400"
+                      title="Delete preset"
+                    >
+                      <Trash2 size={9} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Save current arrangement as a shape preset */}
+        {hasPanes && (
+          <div className="mt-2">
+            {savingShape ? (
+              <form onSubmit={handleSaveShape} className="flex gap-1">
+                <input
+                  ref={shapeNameRef}
+                  type="text"
+                  value={shapeName}
+                  onChange={(e) => setShapeName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSavingShape(false);
+                      setShapeName('');
+                    }
+                  }}
+                  placeholder="Shape name…"
+                  className={cn(
+                    'min-w-0 flex-1 rounded-md px-2 py-1 text-[11px]',
+                    'bg-zinc-800 text-zinc-200 placeholder:text-zinc-600',
+                    'border border-zinc-700 outline-none focus:border-blue-500/50',
+                  )}
+                  spellCheck={false}
+                />
+                <button
+                  type="submit"
+                  disabled={!shapeName.trim()}
+                  className="rounded-md bg-blue-500/20 px-2 py-1 text-[11px] text-blue-400 transition-colors hover:bg-blue-500/30 disabled:opacity-40"
+                >
+                  Save
+                </button>
+              </form>
+            ) : (
+              <button
+                onClick={() => setSavingShape(true)}
+                className={cn(
+                  'mt-2 flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5',
+                  'text-[11px] text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300',
+                  'transition-colors',
+                )}
+                title="Save the current split arrangement as a reusable shape"
+              >
+                <Bookmark size={10} strokeWidth={2} />
+                Save current shape…
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Save current layout */}
         {hasPanes && (

@@ -715,3 +715,172 @@ describe('focus navigation — edge cases', () => {
     expect(wt()!.activePaneId).toBe(panes[panes.length - 1]!.id);
   });
 });
+
+// ── Dashboard preset lifecycle ──
+
+describe('activeDashboardPreset lifecycle', () => {
+  it('openProjects sets activeDashboardPreset to the passed name', () => {
+    const store = useWorkspaceStore.getState();
+    const a = store.addProject('A', '/a');
+    const b = store.addProject('B', '/b');
+    useWorkspaceStore.getState().openProjects([a, b], '2×2 Grid');
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBe('2×2 Grid');
+  });
+
+  it('openProjects deduplicates already-open IDs', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    // A and B are already open from addProject. Re-open A + add C.
+    const c = useWorkspaceStore.getState().addProject('C', '/c');
+    useWorkspaceStore.getState().openProjects([a, b, c], 'Side by Side');
+    const state = useWorkspaceStore.getState();
+    expect(state.openProjectIds).toEqual([a, b, c]);
+  });
+
+  it('openProject (singular) clears activeDashboardPreset', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().openProjects([a, b], 'Side by Side');
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBe(
+      'Side by Side',
+    );
+
+    const c = useWorkspaceStore.getState().addProject('C', '/c');
+    // addProject auto-opens, which itself should clear. Close C then re-open via openProject.
+    useWorkspaceStore.getState().closeProject(c);
+    // Re-establish a preset scenario
+    useWorkspaceStore.getState().openProjects([a, b], 'Side by Side');
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBe(
+      'Side by Side',
+    );
+
+    useWorkspaceStore.getState().openProject(c);
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBeNull();
+  });
+
+  it('closeProject clears activeDashboardPreset', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().openProjects([a, b], 'Side by Side');
+    useWorkspaceStore.getState().closeProject(a);
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBeNull();
+  });
+
+  it('removeProject clears activeDashboardPreset', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().openProjects([a, b], 'Side by Side');
+    useWorkspaceStore.getState().removeProject(a);
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBeNull();
+  });
+
+  it('addProject clears activeDashboardPreset', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().openProjects([a, b], 'Side by Side');
+    useWorkspaceStore.getState().addProject('C', '/c');
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBeNull();
+  });
+
+  it('preset does not leak across close → reopen different project', () => {
+    // Reproduce the reported bug: pick a preset for one set of projects,
+    // shrink the dashboard, then bring the count back up via a different
+    // project. The stale preset must not re-apply.
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().openProjects([a, b], '2×2 Grid');
+    // Count happens not to match 2×2 anyway, but pretend it did; the point is
+    // that any subsequent membership change invalidates the preset.
+    useWorkspaceStore.getState().closeProject(b);
+    // Now openProjectIds = [a], preset should be cleared.
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBeNull();
+
+    // Bring count back up via a different project — preset must remain null.
+    const c = useWorkspaceStore.getState().addProject('C', '/c');
+    useWorkspaceStore.getState().openProject(c);
+    expect(useWorkspaceStore.getState().openProjectIds).toContain(a);
+    expect(useWorkspaceStore.getState().openProjectIds).toContain(c);
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBeNull();
+  });
+});
+
+// ── setOpenProjects ──
+
+describe('setOpenProjects', () => {
+  it('replaces the open set — opens new ids and closes missing ones', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    const c = useWorkspaceStore.getState().addProject('C', '/c');
+    // addProject auto-opens all three.
+    expect(useWorkspaceStore.getState().openProjectIds).toEqual([a, b, c]);
+
+    // Drop b, keep a and c.
+    useWorkspaceStore.getState().setOpenProjects([a, c], null);
+    expect(useWorkspaceStore.getState().openProjectIds).toEqual([a, c]);
+  });
+
+  it('applies the passed preset name', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().setOpenProjects([a, b], 'Side by Side');
+    expect(useWorkspaceStore.getState().activeDashboardPreset).toBe(
+      'Side by Side',
+    );
+  });
+
+  it('preserves the order of the passed ids', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().setOpenProjects([b, a], null);
+    expect(useWorkspaceStore.getState().openProjectIds).toEqual([b, a]);
+  });
+
+  it('fast-path preserves dashboardLayout when set and preset are unchanged', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().setOpenProjects([a, b], 'Side by Side');
+
+    // Pretend the dashboard has a saved layout.
+    const fakeLayout = { grid: { root: {} } } as unknown;
+    useWorkspaceStore.setState({ dashboardLayout: fakeLayout });
+
+    // Calling again with the same ids and preset should NOT clear the layout.
+    useWorkspaceStore.getState().setOpenProjects([a, b], 'Side by Side');
+    expect(useWorkspaceStore.getState().dashboardLayout).toBe(fakeLayout);
+  });
+
+  it('resets dashboardLayout when the set changes', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.getState().setOpenProjects([a, b], null);
+
+    useWorkspaceStore.setState({
+      dashboardLayout: { grid: {} } as unknown,
+    });
+
+    useWorkspaceStore.getState().setOpenProjects([a], null);
+    expect(useWorkspaceStore.getState().dashboardLayout).toBeNull();
+  });
+
+  it('navigates to level 2', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    useWorkspaceStore.setState({ currentLevel: 1 });
+    useWorkspaceStore.getState().setOpenProjects([a], null);
+    expect(useWorkspaceStore.getState().currentLevel).toBe(2);
+  });
+
+  it('ignores unknown project ids', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    useWorkspaceStore.getState().setOpenProjects([a, 'bogus-id'], null);
+    expect(useWorkspaceStore.getState().openProjectIds).toEqual([a]);
+  });
+
+  it('picks a valid activeProjectId when the previous one is closed', () => {
+    const a = useWorkspaceStore.getState().addProject('A', '/a');
+    const b = useWorkspaceStore.getState().addProject('B', '/b');
+    useWorkspaceStore.setState({ activeProjectId: a });
+
+    useWorkspaceStore.getState().setOpenProjects([b], null);
+    expect(useWorkspaceStore.getState().activeProjectId).toBe(b);
+  });
+});
