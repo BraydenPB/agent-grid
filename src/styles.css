@@ -270,7 +270,7 @@ body {
   background: rgba(255, 255, 255, 0.12);
 }
 
-/* ─── Inactive pane dimming (like iTerm2) ─── */
+/* ─── Inactive pane dimming ─── */
 .pane-inactive .terminal-container {
   opacity: 0.55;
   transition: opacity var(--duration-normal) var(--ease-out);

@@ -1,6 +1,6 @@
 # Agent Grid
 
-A fast, cross-platform, open-source desktop app for running multiple AI coding terminals in parallel. Think **Lemonade, but open source and extensible**.
+A fast, cross-platform, open-source desktop app for running multiple AI coding terminals in parallel — real PTY sessions, configurable grid, one-click launch for any CLI tool.
 
 Run Claude Code, Codex, Gemini CLI, Aider, OpenCode, or any CLI tool side-by-side in a configurable terminal grid — powered by real PTY sessions, not fake terminal emulators.
 
