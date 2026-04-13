@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-alpha.1] - 2026-04-12
+
+Opens the v0.2.0 pre-release cycle. Layout system is now unified across the
+dashboard grid and worktree dockview; adds nested workspace safety and major
+UX work on top of v0.1.0-beta.1.
+
+### Added
+
+- Unified layout module (`src/features/layouts`) — single source of truth for
+  dashboard tile grids and Dockview splits, with a declarative preset tree
+- Multi-select projects with built-in layout presets
+- Nested workspace safety checks to prevent worktree collisions
+- Global default terminal profile, selectable from the titlebar "New" menu
+- Persisted custom layout presets
+- UNC/WSL path normalization when opening projects
+- Expanded test coverage (246 tests across workspace store, terminal
+  registry, and layout engine)
+- Release workflow (`.github/workflows/release.yml`) that builds Tauri
+  binaries for Windows, macOS (arm64), and Linux on tag push
+- `SECURITY.md` with private vulnerability reporting guidance
+
+### Fixed
+
+- Backend tokio runtime override so multi-terminal output no longer blocks
+- PowerShell call-operator quoting, dockview listener cleanup, and lockfile
+  sync edge cases
+
+### Known Limitations
+
+Same as `v0.1.0-beta.1` — no code signing, no auto-updater, terminal
+history lost on preset switch, ~1.5 MB JS bundle.
+
 ## [0.1.0-beta.1] - 2026-04-08
 
 First public pre-release. Core terminal multiplexer is functional and security-hardened.
