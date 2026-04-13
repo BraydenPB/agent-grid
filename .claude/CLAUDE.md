@@ -1,8 +1,9 @@
 # Agent Grid
 
-Open-source Lemonade alternative — multi-pane AI terminal desktop app.
+Open-source multi-pane AI terminal desktop app.
 
 ## Stack
+
 - **Framework**: Tauri v2 (Rust backend + system WebView)
 - **Frontend**: React 19 + TypeScript + Vite 6
 - **Routing**: TanStack Router (type-safe file-based routing, SPA-only — no TanStack Start)
@@ -14,6 +15,7 @@ Open-source Lemonade alternative — multi-pane AI terminal desktop app.
 - **UI**: Custom components (shadcn/ui patterns, no installed shadcn)
 
 ## Stack Decisions (researched 2026-04-05)
+
 - **TanStack Router over Next.js**: Next.js SSR features (API routes, middleware, server components) are dead weight in a Tauri webview SPA. TanStack Router is Vite-native, type-safe, lighter (~42 KB vs ~92 KB), and recommended by Tauri community. Use plain Router, not TanStack Start (Start adds SSR overhead unnecessary for desktop).
 - **Dockview over react-grid-layout**: react-grid-layout is a dashboard widget grid, not an IDE panel manager. Dockview (v5.2+, zero-dep, actively maintained) is purpose-built for VS Code-style docking with tabs, split panes, floating panels, and popout windows. Layout serialization built-in for workspace persistence.
 - **Zustand confirmed**: ~4M weekly downloads, ~3KB, minimal API. Best fit for complex client state (workspaces, settings, agent sessions). Jotai is complementary for fine-grained derived state if needed later.
@@ -22,6 +24,7 @@ Open-source Lemonade alternative — multi-pane AI terminal desktop app.
 - **Tailwind v4 note**: Known macOS WebView bug (GitHub #14219) where styles don't apply — not an issue on Windows. Use `@tailwindcss/vite` plugin (not PostCSS).
 
 ## Architecture
+
 ```
 src/
   app/            — root App component
@@ -39,6 +42,7 @@ src-tauri/
 ```
 
 ## Key Patterns
+
 - PTY spawned via `tauri-pty` JS API: `spawn(command, args, { cols, rows })`
 - xterm.js Terminal instance per pane, with FitAddon + WebglAddon
 - ResizeObserver on terminal container triggers `fitAddon.fit()` → `pty.resize()`
@@ -48,6 +52,7 @@ src-tauri/
 - Grid presets define layout templates (Single, 2x2, 3-col, etc.)
 
 ## Conventions
+
 - kebab-case file names
 - Small, focused components — one component per file
 - Tailwind for all styling — no CSS modules
@@ -55,6 +60,7 @@ src-tauri/
 - TypeScript strict mode
 
 ## Dev Commands
+
 ```bash
 npm run tauri dev    # Start dev (Vite + Tauri)
 npm run build        # Frontend build (tsc + vite)
@@ -63,6 +69,7 @@ cargo check          # Rust check (run from src-tauri/)
 ```
 
 ## Important Notes
+
 - `tauri-pty` JS package is v0.2.1, Rust crate is v0.2
 - xterm.js v6 uses `@xterm/xterm` imports (not `xterm`)
 - Platform detection via `@tauri-apps/plugin-os` → `platform()`
