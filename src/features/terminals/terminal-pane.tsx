@@ -1,7 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
@@ -24,6 +23,11 @@ import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
 import {
   getTerminalEntry,
   setTerminalEntry,
+  zoomTerminalFont,
+  FONT_SIZE_DEFAULT,
+  acquireWebgl,
+  bufferPtyData,
+  setTerminalVisible,
   type TerminalEntry,
 } from '@/lib/terminal-registry';
 import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
@@ -33,10 +37,6 @@ import { TerminalSearch } from './terminal-search';
 import { TerminalContextMenu } from './terminal-context-menu';
 
 /* ── Constants ── */
-const FONT_SIZE_MIN = 8;
-const FONT_SIZE_MAX = 28;
-const FONT_SIZE_DEFAULT = 13;
-
 const TERMINAL_THEME = {
   background: '#0a0a0f',
   foreground: '#c8ccd4',
@@ -71,6 +71,14 @@ interface TerminalPaneProps {
   onClose: () => void;
   paneId: string;
   initialCwd?: string;
+  /** Hide the built-in pane header (used when an outer container provides its own). */
+  hideHeader?: boolean;
+  /**
+   * Skip the WebGL renderer entirely (falls back to xterm's DOM renderer).
+   * Used by dashboard tiles — many small viewports at once would otherwise
+   * burn through the browser's WebGL context cap.
+   */
+  preferDomRenderer?: boolean;
 }
 
 const IDLE_TIMEOUT_MS = 3000;
@@ -82,6 +90,8 @@ export function TerminalPane({
   onClose,
   paneId,
   initialCwd,
+  hideHeader = false,
+  preferDomRenderer = false,
 }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const entryRef = useRef<TerminalEntry | null>(null);
@@ -133,26 +143,9 @@ export function TerminalPane({
     ): { searchAddon: SearchAddon; serializeAddon: SerializeAddon } => {
       term.loadAddon(fitAddon);
 
-      try {
-        const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          webglAddon.dispose();
-          // xterm falls back to its built-in canvas renderer after dispose.
-          // Try to re-create WebGL after a short delay.
-          setTimeout(() => {
-            try {
-              const replacement = new WebglAddon();
-              replacement.onContextLoss(() => replacement.dispose());
-              term.loadAddon(replacement);
-            } catch {
-              /* stay on canvas renderer */
-            }
-          }, 1000);
-        });
-        term.loadAddon(webglAddon);
-      } catch {
-        /* Canvas renderer fallback */
-      }
+      // WebGL is attached on demand by the registry's acquireWebgl() pool —
+      // see the visibility / focus effects below. Keeping WebGL on every pane
+      // blows through the browser's ~16 context cap when many terminals are open.
 
       const searchAddon = new SearchAddon();
       term.loadAddon(searchAddon);
@@ -162,7 +155,10 @@ export function TerminalPane({
           window.open(uri, '_blank', 'noopener');
         },
         {
-          urlRegex: /https?:\/\/[^\s'")\]}>]+/g,
+          // Must NOT include the /g flag — WebLinksAddon appends it
+          // internally, and a duplicate flag makes `new RegExp(source, 'gg')`
+          // throw on every mouse-move, freezing input.
+          urlRegex: /https?:\/\/[^\s'")\]}>]+/,
         },
       );
       term.loadAddon(webLinksAddon);
@@ -233,16 +229,14 @@ export function TerminalPane({
           onClose();
           return false;
         }
-        if (e.ctrlKey && !e.shiftKey && e.key === '=' && e.type === 'keydown') {
-          changeFontSize(1);
-          return false;
-        }
-        if (e.ctrlKey && !e.shiftKey && e.key === '-' && e.type === 'keydown') {
-          changeFontSize(-1);
-          return false;
-        }
-        if (e.ctrlKey && !e.shiftKey && e.key === '0' && e.type === 'keydown') {
-          resetFontSize();
+        // Ctrl+= / Ctrl+- / Ctrl+0 (zoom) are handled globally with
+        // preventDefault — let them propagate up.
+        if (
+          e.ctrlKey &&
+          !e.shiftKey &&
+          !e.altKey &&
+          (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')
+        ) {
           return false;
         }
         // Let devtools shortcuts through to native WebView handler
@@ -277,28 +271,6 @@ export function TerminalPane({
     },
     [initialProfile.id, onClose],
   );
-
-  /* ── Font zoom ── */
-  const changeFontSize = (delta: number) => {
-    const entry = entryRef.current;
-    if (!entry) return;
-    const next = Math.max(
-      FONT_SIZE_MIN,
-      Math.min(FONT_SIZE_MAX, entry.fontSize + delta),
-    );
-    if (next === entry.fontSize) return;
-    entry.fontSize = next;
-    entry.terminal.options.fontSize = next;
-    entry.fitAddon.fit();
-  };
-
-  const resetFontSize = () => {
-    const entry = entryRef.current;
-    if (!entry) return;
-    entry.fontSize = FONT_SIZE_DEFAULT;
-    entry.terminal.options.fontSize = FONT_SIZE_DEFAULT;
-    entry.fitAddon.fit();
-  };
 
   /* ── OSC sequence handler for shell integration ── */
   const updatePaneCwd = useWorkspaceStore((s) => s.updatePaneCwd);
@@ -368,8 +340,15 @@ export function TerminalPane({
         }
 
         pty.onData((data: Uint8Array) => {
-          entry.terminal.write(data);
-          // Track activity for status
+          // Route data: visible panes write directly; hidden panes queue the
+          // chunks so xterm's parser isn't burning main-thread time in the
+          // background. The buffer flushes automatically on visibility change.
+          if (entry.isVisible) {
+            entry.terminal.write(data);
+          } else {
+            bufferPtyData(paneId, data);
+          }
+          // Track activity for status (runs regardless of visibility)
           if (!processExitedRef.current) {
             const currentStatus =
               usePaneStatusStore.getState().statuses[paneId];
@@ -605,10 +584,37 @@ export function TerminalPane({
       fontSize: FONT_SIZE_DEFAULT,
       profileId: initialProfile.id,
       cwd: initialCwd || '',
+      webglAddon: null,
+      preferDomRenderer,
+      writeBuffer: [],
+      writeBufferSize: 0,
+      writeBufferTruncated: false,
+      isVisible: true,
+      visibilityObserver: null,
     };
 
     setTerminalEntry(paneId, entry);
     entryRef.current = entry;
+
+    // Acquire a WebGL context from the shared pool. Dashboard tiles opt out
+    // (preferDomRenderer=true) so they always use the DOM renderer.
+    if (!preferDomRenderer) acquireWebgl(paneId);
+
+    // IntersectionObserver drives the visibility flag that gates PTY writes.
+    // Observing the persistent xterm element means the observer keeps working
+    // across Dockview rearranges (registry keeps the element alive).
+    if (typeof IntersectionObserver !== 'undefined') {
+      const visObserver = new IntersectionObserver(
+        (records) => {
+          for (const rec of records) {
+            setTerminalVisible(paneId, rec.isIntersecting);
+          }
+        },
+        { threshold: 0 },
+      );
+      visObserver.observe(xtermContainer);
+      entry.visibilityObserver = visObserver;
+    }
 
     // ResizeObserver
     let disposed = false;
@@ -661,6 +667,22 @@ export function TerminalPane({
     };
   }, [paneId]); // Only re-run if paneId changes (never during rearrange)
 
+  /* ── Ctrl+Wheel to zoom ── */
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      zoomTerminalFont(paneId, e.deltaY > 0 ? -1 : 1);
+    };
+    node.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    return () => {
+      node.removeEventListener('wheel', onWheel, { capture: true });
+    };
+  }, [paneId]);
+
   useEffect(() => {
     if (entryRef.current) {
       entryRef.current.profileId = paneProfileId;
@@ -669,13 +691,17 @@ export function TerminalPane({
 
   useEffect(() => {
     if (isActive && entryRef.current) {
+      // Touch the WebGL pool on focus — brings this pane back from DOM-renderer
+      // fallback if it was evicted, and bumps LRU so it stays until another pane
+      // takes the slot.
+      if (!preferDomRenderer) acquireWebgl(paneId);
       entryRef.current.terminal.focus();
       // Clear attention status when pane gains focus
       if (paneStatus === 'attention') {
         setStatus(paneId, processExitedRef.current ? 'done' : 'working');
       }
     }
-  }, [isActive, paneId, paneStatus, setStatus]);
+  }, [isActive, paneId, paneStatus, setStatus, preferDomRenderer]);
 
   const cwdLabel = cwd ? cwd.split(/[\\/]/).pop() : '';
 
@@ -707,153 +733,159 @@ export function TerminalPane({
       />
 
       {/* Pane header */}
-      <div
-        className={cn(
-          'pane-drag-handle flex h-8 shrink-0 items-center justify-between gap-2 px-3 pl-3.5',
-          'cursor-grab select-none active:cursor-grabbing',
-          'border-b border-white/[0.06]',
-          'transition-colors duration-100',
-          isActive ? 'bg-white/[0.04]' : 'bg-white/[0.02]',
-        )}
-        style={{ '--accent-1': effectiveColor } as React.CSSProperties}
-        onDoubleClick={handleHeaderDoubleClick}
-        title="Double-click to maximize"
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          {/* Profile color dot with status indicator */}
-          <span className="relative flex shrink-0 items-center justify-center">
-            <span
-              className="h-2 w-2 rounded-full transition-all duration-200"
-              style={{
-                backgroundColor: effectiveColor,
-                opacity: isActive ? 1 : 0.4,
-                boxShadow: isActive ? `0 0 6px ${effectiveColor}44` : 'none',
-              }}
-            />
-            {paneStatus !== 'working' && statusColor !== 'transparent' && (
+      {!hideHeader && (
+        <div
+          className={cn(
+            'pane-drag-handle flex h-8 shrink-0 items-center justify-between gap-2 px-3 pl-3.5',
+            'cursor-grab select-none active:cursor-grabbing',
+            'border-b border-white/[0.06]',
+            'transition-colors duration-100',
+            isActive ? 'bg-white/[0.04]' : 'bg-white/[0.02]',
+          )}
+          style={{ '--accent-1': effectiveColor } as React.CSSProperties}
+          onDoubleClick={handleHeaderDoubleClick}
+          title="Double-click to maximize"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {/* Profile color dot with status indicator */}
+            <span className="relative flex shrink-0 items-center justify-center">
               <span
-                className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: statusColor }}
+                className="h-2 w-2 rounded-full transition-all duration-200"
+                style={{
+                  backgroundColor: effectiveColor,
+                  opacity: isActive ? 1 : 0.4,
+                  boxShadow: isActive ? `0 0 6px ${effectiveColor}44` : 'none',
+                }}
               />
-            )}
-          </span>
-
-          {/* Profile name */}
-          <span
-            className={cn(
-              'truncate text-[11px] font-medium transition-colors duration-100',
-              isActive ? 'text-zinc-200' : 'text-zinc-500',
-            )}
-          >
-            {activeProfile.name}
-          </span>
-
-          {/* CWD breadcrumb */}
-          {cwdLabel && (
-            <div
-              className={cn(
-                'flex items-center gap-1 rounded px-1.5 py-0.5',
-                isActive ? 'bg-white/[0.04]' : 'bg-transparent',
+              {paneStatus !== 'working' && statusColor !== 'transparent' && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: statusColor }}
+                />
               )}
-              title={cwd}
-            >
-              <FolderOpen
-                size={9}
-                className={cn(
-                  'shrink-0',
-                  isActive ? 'text-zinc-500' : 'text-zinc-700',
-                )}
-                strokeWidth={1.5}
-              />
-              <span
-                className={cn(
-                  'max-w-[180px] truncate text-[10px]',
-                  isActive ? 'text-zinc-400' : 'text-zinc-600',
-                )}
-              >
-                {cwdLabel}
-              </span>
-            </div>
-          )}
-
-          {/* Maximized indicator */}
-          {isMaximized && (
-            <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium text-zinc-500">
-              ESC to restore
             </span>
-          )}
-        </div>
 
-        {/* Header actions — always visible */}
-        <div className="flex shrink-0 items-center gap-0.5">
-          {/* Split buttons — visible on hover */}
-          <div
-            className={cn(
-              'flex items-center gap-0.5 transition-opacity duration-100',
-              'opacity-0 group-hover:opacity-100',
+            {/* Profile name */}
+            <span
+              className={cn(
+                'truncate text-[11px] font-medium transition-colors duration-100',
+                isActive ? 'text-zinc-200' : 'text-zinc-500',
+              )}
+            >
+              {activeProfile.name}
+            </span>
+
+            {/* CWD breadcrumb */}
+            {cwdLabel && (
+              <div
+                className={cn(
+                  'flex items-center gap-1 rounded px-1.5 py-0.5',
+                  isActive ? 'bg-white/[0.04]' : 'bg-transparent',
+                )}
+                title={cwd}
+              >
+                <FolderOpen
+                  size={9}
+                  className={cn(
+                    'shrink-0',
+                    isActive ? 'text-zinc-500' : 'text-zinc-700',
+                  )}
+                  strokeWidth={1.5}
+                />
+                <span
+                  className={cn(
+                    'max-w-[180px] truncate text-[10px]',
+                    isActive ? 'text-zinc-400' : 'text-zinc-600',
+                  )}
+                >
+                  {cwdLabel}
+                </span>
+              </div>
             )}
-          >
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                useWorkspaceStore.getState().addPane(activeProfile.id, 'right');
-              }}
-              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
-              title="Split Right (Ctrl+Shift+D)"
-            >
-              <PanelRight size={10} strokeWidth={1.5} />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                useWorkspaceStore.getState().addPane(activeProfile.id, 'below');
-              }}
-              className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
-              title="Split Below (Ctrl+Shift+E)"
-            >
-              <PanelBottom size={10} strokeWidth={1.5} />
-            </button>
-            <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
+
+            {/* Maximized indicator */}
+            {isMaximized && (
+              <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium text-zinc-500">
+                ESC to restore
+              </span>
+            )}
           </div>
 
-          {/* Maximize / Restore */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleMaximize(paneId);
-            }}
-            className={cn(
-              'flex h-5 w-5 items-center justify-center rounded',
-              'transition-all duration-100',
-              isMaximized
-                ? 'text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
-                : 'text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300',
-            )}
-            title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
-          >
-            {isMaximized ? (
-              <Minimize2 size={10} strokeWidth={2} />
-            ) : (
-              <Maximize2 size={10} strokeWidth={2} />
-            )}
-          </button>
-          {/* Close — always visible */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose();
-            }}
-            className={cn(
-              'flex h-5 w-5 items-center justify-center rounded',
-              'transition-all duration-100',
-              'text-zinc-600 hover:bg-red-500/[0.1] hover:text-red-400',
-            )}
-            title="Close pane (Ctrl+Shift+W)"
-          >
-            <X size={10} strokeWidth={2} />
-          </button>
+          {/* Header actions — always visible */}
+          <div className="flex shrink-0 items-center gap-0.5">
+            {/* Split buttons — visible on hover */}
+            <div
+              className={cn(
+                'flex items-center gap-0.5 transition-opacity duration-100',
+                'opacity-0 group-hover:opacity-100',
+              )}
+            >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useWorkspaceStore
+                    .getState()
+                    .addPane(activeProfile.id, 'right');
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+                title="Split Right (Ctrl+Shift+D)"
+              >
+                <PanelRight size={10} strokeWidth={1.5} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useWorkspaceStore
+                    .getState()
+                    .addPane(activeProfile.id, 'below');
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 transition-all duration-100 hover:bg-white/[0.06] hover:text-zinc-300"
+                title="Split Below (Ctrl+Shift+E)"
+              >
+                <PanelBottom size={10} strokeWidth={1.5} />
+              </button>
+              <span className="mx-0.5 h-3 w-px bg-white/[0.06]" />
+            </div>
+
+            {/* Maximize / Restore */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleMaximize(paneId);
+              }}
+              className={cn(
+                'flex h-5 w-5 items-center justify-center rounded',
+                'transition-all duration-100',
+                isMaximized
+                  ? 'text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200'
+                  : 'text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300',
+              )}
+              title={isMaximized ? 'Restore (Esc)' : 'Maximize (Ctrl+Enter)'}
+            >
+              {isMaximized ? (
+                <Minimize2 size={10} strokeWidth={2} />
+              ) : (
+                <Maximize2 size={10} strokeWidth={2} />
+              )}
+            </button>
+            {/* Close — always visible */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              className={cn(
+                'flex h-5 w-5 items-center justify-center rounded',
+                'transition-all duration-100',
+                'text-zinc-600 hover:bg-red-500/[0.1] hover:text-red-400',
+              )}
+              title="Close pane (Ctrl+Shift+W)"
+            >
+              <X size={10} strokeWidth={2} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Search */}
       <TerminalSearch

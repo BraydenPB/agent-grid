@@ -20,6 +20,8 @@ interface SavedLayoutV4 {
   dashboardLayout: unknown;
   /** Name of the grid preset currently applied to the dashboard (level 2). */
   activeDashboardPreset?: string | null;
+  /** Global default terminal profile used when opening projects from L1. */
+  defaultProfileId?: string;
   rootFolderPath: string | null;
   savedAt: string;
 }
@@ -351,6 +353,7 @@ export function saveLayout(state: {
   currentLevel: 1 | 2 | 3;
   dashboardLayout: unknown;
   activeDashboardPreset?: string | null;
+  defaultProfileId?: string;
   rootFolderPath: string | null;
 }): void {
   const data: SavedLayoutV4 = {
@@ -362,6 +365,7 @@ export function saveLayout(state: {
     currentLevel: state.currentLevel,
     dashboardLayout: state.dashboardLayout,
     activeDashboardPreset: state.activeDashboardPreset ?? null,
+    defaultProfileId: state.defaultProfileId,
     rootFolderPath: state.rootFolderPath,
     savedAt: new Date().toISOString(),
   };

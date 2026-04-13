@@ -3,7 +3,15 @@ import { X, GitBranch, Maximize2, FolderOpen } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorkspaceStore, getOpenProjects } from '@/store/workspace-store';
 import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
-import { GRID_PRESETS } from '@/lib/grid-presets';
+import {
+  findBuiltinByName,
+  leafCount,
+  leaf,
+  row,
+  col,
+  TileTree,
+  type LayoutNode,
+} from '@/features/layouts';
 import { cn } from '@/lib/utils';
 import type { Project, Pane, TerminalProfile } from '@/types';
 import { TerminalPane } from '@/features/terminals/terminal-pane';
@@ -17,72 +25,64 @@ const FALLBACK_PROFILE: TerminalProfile = {
 };
 
 /**
- * Given the number of open projects, return Tailwind classes for an auto-tiling grid.
- * - 1: single cell
- * - 2: 2 columns side by side
- * - 3: 3 columns
- * - 4: 2x2 grid
- * - 5-6: 3 columns, 2 rows
- * - 7-8: 4 columns, 2 rows
- * - 9+: 3 columns auto-flow
+ * Auto-tile fallback — generates a balanced tree when no preset is active
+ * or when the active preset's leaf count doesn't match the tile count.
+ *
+ * Mirrors the old auto-tile table: 1/2/3 cols for small counts, 2×2 at 4,
+ * 3 cols at 5-6, 4 cols at 7-8, 3-col auto-fit for 9+.
  */
-function gridClassesForCount(count: number): string {
-  if (count <= 1) return 'grid-cols-1 grid-rows-1';
-  if (count === 2) return 'grid-cols-2 grid-rows-1';
-  if (count === 3) return 'grid-cols-3 grid-rows-1';
-  if (count === 4) return 'grid-cols-2 grid-rows-2';
-  if (count <= 6) return 'grid-cols-3 grid-rows-2';
-  if (count <= 8) return 'grid-cols-4 grid-rows-2';
-  return 'grid-cols-[repeat(auto-fit,minmax(360px,1fr))]';
+function autoTileTree(count: number): LayoutNode {
+  if (count <= 1) return leaf();
+  if (count === 2) return row(leaf(), leaf());
+  if (count === 3) return row(leaf(), leaf(), leaf());
+  if (count === 4) return col(row(leaf(), leaf()), row(leaf(), leaf()));
+  if (count <= 6) {
+    const top = row(leaf(), leaf(), leaf());
+    const bottomLeaves = Array.from({ length: count - 3 }, () => leaf());
+    while (bottomLeaves.length < 3) bottomLeaves.push(leaf());
+    return col(top, row(...bottomLeaves));
+  }
+  if (count <= 8) {
+    const top = row(leaf(), leaf(), leaf(), leaf());
+    const bottomLeaves = Array.from({ length: count - 4 }, () => leaf());
+    while (bottomLeaves.length < 4) bottomLeaves.push(leaf());
+    return col(top, row(...bottomLeaves));
+  }
+  // 9+: three columns, ceil(count/3) rows — distribute left-to-right
+  const cols = 3;
+  const rows = Math.ceil(count / cols);
+  const rowNodes: LayoutNode[] = [];
+  for (let r = 0; r < rows; r++) {
+    const children: LayoutNode[] = [];
+    for (let c = 0; c < cols; c++) children.push(leaf());
+    rowNodes.push(row(...children));
+  }
+  return col(...rowNodes);
 }
 
 /**
- * Preset → CSS grid layout. Keys must match GRID_PRESETS[].name exactly.
- * `tileClasses` is an optional per-tile class list for irregular presets
- * (e.g. the first tile of 1+2 Stack spans 2 rows).
+ * Resolve the effective dashboard layout tree. Returns the active preset's
+ * tree when its leaf count matches exactly; otherwise the auto-tile tree.
  */
-const PRESET_TO_CSS: Record<
-  string,
-  { container: string; tileClasses?: string[] }
-> = {
-  Single: { container: 'grid-cols-1 grid-rows-1' },
-  'Side by Side': { container: 'grid-cols-2 grid-rows-1' },
-  '2×2 Grid': { container: 'grid-cols-2 grid-rows-2' },
-  '1 + 2 Stack': {
-    container: 'grid-cols-2 grid-rows-2',
-    tileClasses: ['row-span-2', '', ''],
-  },
-  '3 Column': { container: 'grid-cols-3 grid-rows-1' },
-  '2×3 Grid': { container: 'grid-cols-3 grid-rows-2' },
-  '2×4 Grid (8 panes)': { container: 'grid-cols-2 grid-rows-4' },
-};
-
-/**
- * Resolve the effective dashboard layout. Returns the preset layout if the
- * active preset's panelCount matches the tile count exactly; otherwise falls
- * back to the auto-tile.
- */
-function resolveDashboardLayout(
+function resolveDashboardTree(
   tileCount: number,
   activePresetName: string | null,
-): { container: string; tileClasses?: string[] } {
+): LayoutNode {
   if (activePresetName) {
-    const preset = GRID_PRESETS.find((p) => p.name === activePresetName);
-    const mapping = PRESET_TO_CSS[activePresetName];
-    if (preset && mapping && preset.panelCount === tileCount) {
-      return mapping;
+    const preset = findBuiltinByName(activePresetName);
+    if (preset && leafCount(preset.tree) === tileCount) {
+      return preset.tree;
     }
   }
-  return { container: gridClassesForCount(tileCount) };
+  return autoTileTree(Math.max(tileCount, 1));
 }
 
 interface DashboardTileProps {
   project: Project;
   mainPane: Pane | undefined;
-  className?: string;
 }
 
-function DashboardTile({ project, mainPane, className }: DashboardTileProps) {
+function DashboardTile({ project, mainPane }: DashboardTileProps) {
   const profiles = useWorkspaceStore((s) => s.profiles);
   const closeProject = useWorkspaceStore((s) => s.closeProject);
   const focusProject = useWorkspaceStore((s) => s.focusProject);
@@ -104,13 +104,12 @@ function DashboardTile({ project, mainPane, className }: DashboardTileProps) {
   return (
     <div
       className={cn(
-        'group relative flex min-h-0 min-w-0 flex-col overflow-hidden',
+        'group relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden',
         'border bg-[#0a0a0f]',
         'transition-colors duration-150',
         isFocusedTile
           ? 'border-blue-500/40'
           : 'border-white/[0.06] hover:border-white/[0.10]',
-        className,
       )}
     >
       {/* Header bar */}
@@ -178,6 +177,8 @@ function DashboardTile({ project, mainPane, className }: DashboardTileProps) {
             isActive={isFocusedTile}
             onFocus={() => focusProjectPane(project.id, mainPane.id)}
             onClose={() => closeProject(project.id)}
+            hideHeader
+            preferDomRenderer
           />
         ) : (
           <div className="flex h-full items-center justify-center">
@@ -206,8 +207,8 @@ export function DashboardGrid() {
     });
   }, [openProjects, worktrees]);
 
-  const layout = useMemo(
-    () => resolveDashboardLayout(tiles.length, activeDashboardPreset),
+  const tree = useMemo(
+    () => resolveDashboardTree(tiles.length, activeDashboardPreset),
     [tiles.length, activeDashboardPreset],
   );
 
@@ -234,20 +235,25 @@ export function DashboardGrid() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-zinc-950/40">
-      <div
-        className={cn(
-          'grid min-h-0 flex-1 gap-px bg-white/[0.04] p-px',
-          layout.container,
-        )}
-      >
-        {tiles.map(({ project, mainPane }, i) => (
-          <DashboardTile
-            key={project.id}
-            project={project}
-            mainPane={mainPane}
-            className={layout.tileClasses?.[i]}
-          />
-        ))}
+      <div className="relative flex min-h-0 flex-1 p-px">
+        <TileTree
+          tree={tree}
+          tileCount={tiles.length}
+          renderLeaf={(i) => {
+            const t = tiles[i];
+            if (!t) return null;
+            return (
+              <DashboardTile
+                key={t.project.id}
+                project={t.project}
+                mainPane={t.mainPane}
+              />
+            );
+          }}
+          renderEmpty={() => (
+            <div className="flex h-full items-center justify-center border border-dashed border-white/[0.06]" />
+          )}
+        />
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Pane, Project, WorktreeTab, TerminalProfile } from '@/types';
 import { DEFAULT_PROFILES } from '@/lib/profiles';
-import { GRID_PRESETS } from '@/lib/grid-presets';
+import { applyPresetToPanes, findBuiltinByName } from '@/features/layouts';
 import { generateId } from '@/lib/utils';
 import { getHomeDir, getPlatform } from '@/lib/tauri-shim';
 import {
@@ -62,14 +62,18 @@ function createWorktreeTab(
   };
 }
 
-function createProject(name: string, path: string): Project {
+function createProject(
+  name: string,
+  path: string,
+  defaultProfileId: string = 'system-shell',
+): Project {
   const now = new Date().toISOString();
   return {
     id: generateId(),
     name,
     path,
     mainPaneId: null,
-    defaultProfileId: 'system-shell',
+    defaultProfileId,
     worktreeIds: [],
     activeWorktreeId: '',
     createdAt: now,
@@ -161,9 +165,15 @@ function ensureProjectReady(
   projects: Project[],
   worktrees: Record<string, WorktreeTab>,
   projectId: string,
+  globalDefaultProfileId?: string,
 ): { projects: Project[]; worktrees: Record<string, WorktreeTab> } {
   const project = projects.find((p) => p.id === projectId);
   if (!project) return { projects, worktrees };
+
+  // Prefer the global default (set via titlebar + New dropdown) so opening
+  // projects from L1 honors the user's chosen shell. Fall back to the
+  // project's own default for projects opened via other paths.
+  const profileId = globalDefaultProfileId ?? project.defaultProfileId;
 
   if (project.worktreeIds.length === 0) {
     const wt = createWorktreeTab(
@@ -171,7 +181,7 @@ function ensureProjectReady(
       'main',
       'main',
       project.path,
-      project.defaultProfileId,
+      profileId,
     );
     const nextWorktrees = { ...worktrees, [wt.id]: wt };
     const updated: Project = {
@@ -198,7 +208,7 @@ function ensureProjectReady(
   }
 
   if (!project.mainPaneId && activeWt) {
-    const pane = createPane(project.defaultProfileId);
+    const pane = createPane(profileId);
     pane.cwd = activeWt.cwd;
     const updatedWt: WorktreeTab = {
       ...activeWt,
@@ -298,6 +308,13 @@ export interface WorkspaceState {
    */
   activeDashboardPreset: string | null;
 
+  /**
+   * Global default terminal profile, used when spawning a project's first
+   * pane from the folder browser (Level 1). Persisted. Selected via the
+   * "+ New" dropdown in the titlebar.
+   */
+  defaultProfileId: string;
+
   // Flat worktree map (keyed by worktree ID)
   worktrees: Record<string, WorktreeTab>;
 
@@ -324,6 +341,15 @@ export interface WorkspaceState {
    * - Navigates to level 2
    */
   openProjects: (projectIds: string[], presetName: string | null) => void;
+  /**
+   * Replace the set of open projects with `projectIds`.
+   * - Opens additions (ensureProjectReady on each)
+   * - Closes removals (destroys their terminals + pane statuses)
+   * - Sets activeDashboardPreset to the passed name (null = auto-tile)
+   * - Navigates to level 2
+   * - Preserves dashboardLayout if the set is unchanged AND preset is unchanged
+   */
+  setOpenProjects: (projectIds: string[], presetName: string | null) => void;
   closeProject: (id: string) => void;
   focusProject: (id: string) => void;
   /**
@@ -335,6 +361,16 @@ export interface WorkspaceState {
   goToFolderBrowser: () => void;
   goToDashboard: () => void;
   setMainPane: (paneId: string) => void;
+  /**
+   * Change only the dashboard preset (does not touch the open-project set).
+   * Pass null to revert to auto-tile.
+   */
+  setDashboardPreset: (presetName: string | null) => void;
+  /**
+   * Change the global default terminal profile used when opening projects
+   * from the folder browser. Persisted.
+   */
+  setDefaultProfileId: (profileId: string) => void;
 
   // Worktree tab actions (scoped to active project)
   addWorktreeTab: (branch: string, cwd: string, profileId?: string) => string;
@@ -402,6 +438,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   openProjectIds: [],
   dashboardLayout: null,
   activeDashboardPreset: null,
+  defaultProfileId: cachedStartupLayout?.defaultProfileId ?? 'system-shell',
   worktrees: {},
   profiles: (() => {
     const saved = loadProfileColors();
@@ -423,7 +460,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   /* ── Project actions ── */
 
   addProject: (name, path) => {
-    const project = createProject(name, path);
+    const state = get();
+    const project = createProject(name, path, state.defaultProfileId);
     const wt = createWorktreeTab(
       project.id,
       'main',
@@ -442,6 +480,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeProjectId: project.id,
       currentLevel: 2,
       dashboardLayout: null,
+      activeDashboardPreset: null,
       layoutVersion: s.layoutVersion + 1,
     }));
 
@@ -487,6 +526,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeProjectId: nextActiveId,
       currentLevel: nextOpenIds.length > 0 ? s.currentLevel : 1,
       dashboardLayout: null,
+      activeDashboardPreset: null,
       layoutVersion: s.layoutVersion + 1,
     }));
 
@@ -507,6 +547,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       state.projects,
       state.worktrees,
       id,
+      state.defaultProfileId,
     );
 
     set((s) => ({
@@ -515,6 +556,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       openProjectIds: [...s.openProjectIds, id],
       currentLevel: 2,
       dashboardLayout: null,
+      activeDashboardPreset: null,
       layoutVersion: s.layoutVersion + 1,
     }));
 
@@ -534,7 +576,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     // Ensure each selected project has a worktree + main pane
     for (const id of ids) {
-      const ready = ensureProjectReady(projects, worktrees, id);
+      const ready = ensureProjectReady(
+        projects,
+        worktrees,
+        id,
+        state.defaultProfileId,
+      );
       projects = ready.projects;
       worktrees = ready.worktrees;
     }
@@ -556,6 +603,83 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
 
     // Flush to localStorage — openProjectIds / preset changed
+    saveLayout(get());
+  },
+
+  setOpenProjects: (ids, presetName) => {
+    const state = get();
+
+    // Only keep ids that reference real projects; preserve the passed order
+    // (order becomes the dashboard tile order).
+    const validIds = ids.filter((id) =>
+      state.projects.some((p) => p.id === id),
+    );
+
+    const openSet = new Set(state.openProjectIds);
+    const desiredSet = new Set(validIds);
+    const toClose = state.openProjectIds.filter((id) => !desiredSet.has(id));
+    const toOpen = validIds.filter((id) => !openSet.has(id));
+
+    const setUnchanged =
+      toClose.length === 0 &&
+      toOpen.length === 0 &&
+      state.openProjectIds.length === validIds.length &&
+      state.openProjectIds.every((id, i) => id === validIds[i]);
+    const presetUnchanged = state.activeDashboardPreset === presetName;
+
+    // Fast path: nothing changed — just navigate to the dashboard,
+    // preserving the current layout.
+    if (setUnchanged && presetUnchanged) {
+      if (state.currentLevel !== 2) set({ currentLevel: 2 });
+      return;
+    }
+
+    // Destroy terminals + pane statuses for projects leaving the open set.
+    for (const closedId of toClose) {
+      const project = state.projects.find((p) => p.id === closedId);
+      if (!project) continue;
+      for (const wtId of project.worktreeIds) {
+        const wt = state.worktrees[wtId];
+        if (!wt) continue;
+        for (const pane of wt.panes) {
+          destroyTerminalEntry(pane.id);
+          usePaneStatusStore.getState().removeStatus(pane.id);
+        }
+      }
+    }
+
+    // Ensure each newly-opened project has a worktree + main pane.
+    let projects = state.projects;
+    let worktrees = state.worktrees;
+    for (const id of toOpen) {
+      const ready = ensureProjectReady(
+        projects,
+        worktrees,
+        id,
+        state.defaultProfileId,
+      );
+      projects = ready.projects;
+      worktrees = ready.worktrees;
+    }
+
+    // Pick an activeProjectId that's still in the open set.
+    let nextActiveId = state.activeProjectId;
+    if (!nextActiveId || !desiredSet.has(nextActiveId)) {
+      nextActiveId = validIds[0] ?? null;
+    }
+
+    set((s) => ({
+      projects,
+      worktrees,
+      openProjectIds: validIds,
+      activeProjectId: nextActiveId,
+      activeDashboardPreset: presetName,
+      currentLevel: 2,
+      dashboardLayout: null,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+
+    // Flush to localStorage — terminals destroyed, set changed
     saveLayout(get());
   },
 
@@ -599,6 +723,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeProjectId: nextActiveId,
       currentLevel: nextLevel,
       dashboardLayout: null,
+      activeDashboardPreset: null,
       layoutVersion: s.layoutVersion + 1,
     }));
 
@@ -661,6 +786,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   goToFolderBrowser: () => {
     const state = get();
+    if (state.currentLevel === 1) return;
     const dockviewLayout = captureOutgoingLayout();
 
     if (state.currentLevel === 2) {
@@ -718,6 +844,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((s) => ({
       projects: updateProject(s.projects, project.id, { mainPaneId: paneId }),
     }));
+  },
+
+  setDashboardPreset: (presetName) => {
+    set((s) => ({
+      activeDashboardPreset: presetName,
+      layoutVersion: s.layoutVersion + 1,
+    }));
+    saveLayout(get());
+  },
+
+  setDefaultProfileId: (profileId) => {
+    if (get().defaultProfileId === profileId) return;
+    set({ defaultProfileId: profileId });
+    saveLayout(get());
   },
 
   /* ── Worktree tab actions (scoped to active project) ── */
@@ -1025,33 +1165,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const wt = getActive(state);
       if (!wt) return state;
 
-      const preset = GRID_PRESETS.find((p) => p.name === presetName);
+      const preset = findBuiltinByName(presetName);
       if (!preset) return state;
 
-      const existingPanes = [...wt.panes];
-      const newPanes: Pane[] = [];
-      while (existingPanes.length + newPanes.length < preset.panelCount) {
-        newPanes.push(createPane(profileId));
-      }
-      const allPanes = [...existingPanes, ...newPanes];
-
-      const resultPanes: Pane[] = allPanes.map((pane, i) => {
-        if (i >= preset.positions.length) {
-          return { ...pane, dockviewPosition: undefined, splitFrom: undefined };
-        }
-        const posConfig = preset.positions[i]!;
-        if (!posConfig.direction || posConfig.referenceIndex === undefined) {
-          return { ...pane, dockviewPosition: {}, splitFrom: undefined };
-        }
-        return {
-          ...pane,
-          dockviewPosition: {
-            referenceId: allPanes[posConfig.referenceIndex]!.id,
-            direction: posConfig.direction,
-          },
-          splitFrom: undefined,
-        };
-      });
+      const resultPanes = applyPresetToPanes(
+        preset,
+        wt.panes,
+        createPane,
+        profileId,
+      );
 
       return {
         ...updateActive(state, () => ({
@@ -1417,6 +1539,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeProjectId,
       dashboardLayout: saved.dashboardLayout ?? null,
       activeDashboardPreset: saved.activeDashboardPreset ?? null,
+      defaultProfileId: saved.defaultProfileId ?? state.defaultProfileId,
       rootFolderPath: saved.rootFolderPath ?? state.rootFolderPath,
       currentLevel: saved.currentLevel ?? (openProjectIds.length > 0 ? 2 : 1),
       layoutVersion: state.layoutVersion + 1,

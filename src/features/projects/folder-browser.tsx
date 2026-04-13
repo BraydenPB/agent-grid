@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   FolderOpen,
@@ -63,6 +63,13 @@ function ProjectCard({
     }
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
+      onToggleSelect();
+      return;
+    }
+    // When a selection is already active, a plain click adds/removes
+    // this card from the selection (no need to aim for the checkbox).
+    // Otherwise, a plain click opens the project directly.
+    if (selectionActive) {
       onToggleSelect();
       return;
     }
@@ -206,17 +213,51 @@ export function FolderBrowser() {
   const openProjectIds = useWorkspaceStore((s) => s.openProjectIds);
   const openProject = useWorkspaceStore((s) => s.openProject);
   const addProject = useWorkspaceStore((s) => s.addProject);
-  const openProjectsAction = useWorkspaceStore((s) => s.openProjects);
+  const setOpenProjectsAction = useWorkspaceStore((s) => s.setOpenProjects);
 
   const [scanned, setScanned] = useState<ScannedProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Multi-select state (keyed by path — unique across scanned + external)
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  // Multi-select state (keyed by path — unique across scanned + external).
+  // Seed with currently-open projects so returning from the dashboard shows
+  // them as selected (and lets the user deselect to close them).
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => {
+    const state = useWorkspaceStore.getState();
+    const paths = new Set<string>();
+    for (const id of state.openProjectIds) {
+      const proj = state.projects.find((p) => p.id === id);
+      if (proj) paths.add(proj.path);
+    }
+    return paths;
+  });
   const [anchorPath, setAnchorPath] = useState<string | null>(null);
   const [presetName, setPresetName] = useState<string | null>(null);
+
+  // Resync selection with openProjectIds whenever the browser remounts OR
+  // the open set changes from elsewhere (e.g. a project closed via the app
+  // bar). We only add newly-opened projects — the user's in-flight selection
+  // edits on this page are preserved.
+  const lastSyncedOpenIdsRef = useRef(openProjectIds);
+  useEffect(() => {
+    const prev = lastSyncedOpenIdsRef.current;
+    if (prev === openProjectIds) return;
+    const prevSet = new Set(prev);
+    const addedIds = openProjectIds.filter((id) => !prevSet.has(id));
+    if (addedIds.length > 0) {
+      setSelectedPaths((existing) => {
+        const next = new Set(existing);
+        const state = useWorkspaceStore.getState();
+        for (const id of addedIds) {
+          const proj = state.projects.find((p) => p.id === id);
+          if (proj) next.add(proj.path);
+        }
+        return next;
+      });
+    }
+    lastSyncedOpenIdsRef.current = openProjectIds;
+  }, [openProjectIds]);
 
   // Scan the root folder
   useEffect(() => {
@@ -371,21 +412,16 @@ export function FolderBrowser() {
         scannedItem?.name ?? path.split(/[\\/]/).pop() ?? 'New Project';
       ids.push(store.addProject(name, path));
     }
-    openProjectsAction(ids, presetName);
-    handleClearSelection();
-  }, [
-    selectedPaths,
-    scanned,
-    presetName,
-    openProjectsAction,
-    handleClearSelection,
-  ]);
+    // Replace the open set: opens new selections, closes deselected ones.
+    setOpenProjectsAction(ids, presetName);
+  }, [selectedPaths, scanned, presetName, setOpenProjectsAction]);
 
-  // Presets that exactly fit (existing open + new selected) count.
-  const availablePresets = useMemo(() => {
-    const desiredCount = openProjectIds.length + selectedPaths.size;
-    return GRID_PRESETS.filter((p) => p.panelCount === desiredCount);
-  }, [openProjectIds.length, selectedPaths.size]);
+  // Presets that fit the selected tile count. Selection is now the full
+  // desired open set, so the target count is simply selectedPaths.size.
+  const availablePresets = useMemo(
+    () => GRID_PRESETS.filter((p) => p.panelCount === selectedPaths.size),
+    [selectedPaths.size],
+  );
 
   // Reset preset when the chosen one stops fitting the current count.
   useEffect(() => {
@@ -486,11 +522,12 @@ export function FolderBrowser() {
           </div>
         ) : (
           <>
-            {/* Multi-select hint — shown only when nothing is selected */}
-            {!selectionActive && orderedPaths.length > 1 && (
+            {/* Multi-select hint */}
+            {orderedPaths.length > 1 && (
               <p className="mb-3 text-[11px] text-zinc-600">
-                Click to open · Ctrl/⌘-click or checkbox to select multiple ·
-                Shift-click for range
+                {selectionActive
+                  ? 'Click a card to toggle · Shift-click for range · Esc to clear'
+                  : 'Click to open · Ctrl/⌘-click or checkbox to start a selection'}
               </p>
             )}
             <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">

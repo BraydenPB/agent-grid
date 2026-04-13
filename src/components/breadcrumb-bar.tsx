@@ -16,7 +16,6 @@ export function BreadcrumbBar() {
         'text-[11px] select-none',
       )}
     >
-      {/* Back button */}
       <button
         onClick={goToDashboard}
         className={cn(
@@ -29,7 +28,6 @@ export function BreadcrumbBar() {
         <ArrowLeft size={12} strokeWidth={2} />
       </button>
 
-      {/* Project name */}
       <span className="font-medium text-zinc-400">{project.name}</span>
     </div>
   );

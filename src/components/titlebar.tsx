@@ -8,14 +8,10 @@ import {
   Terminal,
   ChevronDown,
   FolderOpen,
-  PanelRight,
-  PanelBottom,
-  LayoutGrid,
-  Trash2,
-  Maximize2,
-  Minimize2,
+  Check,
 } from 'lucide-react';
 import { useWorkspaceStore, getActiveWorktree } from '@/store/workspace-store';
+import { LayoutControl } from '@/features/layouts/layout-control';
 import { getAppWindow } from '@/lib/tauri-shim';
 import { cn } from '@/lib/utils';
 import type { Pane, TerminalProfile } from '@/types';
@@ -40,41 +36,32 @@ const dropdownVariants = {
 
 export function Titlebar() {
   const profiles = useWorkspaceStore((s) => s.profiles);
-  const addPane = useWorkspaceStore((s) => s.addPane);
-  const setShowProjectBrowser = useWorkspaceStore(
-    (s) => s.setShowProjectBrowser,
-  );
-  const clearAllPanes = useWorkspaceStore((s) => s.clearAllPanes);
-  const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
+  const defaultProfileId = useWorkspaceStore((s) => s.defaultProfileId);
+  const setDefaultProfileId = useWorkspaceStore((s) => s.setDefaultProfileId);
+  const goToFolderBrowser = useWorkspaceStore((s) => s.goToFolderBrowser);
   const currentLevel = useWorkspaceStore((s) => s.currentLevel);
   const activeWorkspace = useWorkspaceStore(getActiveWorktree);
 
   const activePaneId = activeWorkspace?.activePaneId ?? null;
-  const maximizedPaneId = activeWorkspace?.maximizedPaneId ?? null;
   const panes = activeWorkspace?.panes ?? [];
 
-  const [addOpen, setAddOpen] = useState(false);
-  const [layoutOpen, setLayoutOpen] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const addRef = useRef<HTMLDivElement>(null);
-  const layoutRef = useRef<HTMLDivElement>(null);
-  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [shellOpen, setShellOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
 
   const hasPanes = panes.length > 0 && currentLevel >= 2;
+  const showLayoutControl = currentLevel === 2 || currentLevel === 3;
+
+  const defaultProfile =
+    profiles.find((p) => p.id === defaultProfileId) ?? profiles[0];
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (addRef.current && !addRef.current.contains(e.target as Node))
-        setAddOpen(false);
-      if (layoutRef.current && !layoutRef.current.contains(e.target as Node)) {
-        setLayoutOpen(false);
-        setConfirmClear(false);
-      }
+      if (shellRef.current && !shellRef.current.contains(e.target as Node))
+        setShellOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => {
       document.removeEventListener('mousedown', handleClick);
-      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
     };
   }, []);
 
@@ -107,208 +94,128 @@ export function Titlebar() {
 
         <div className="h-3.5 w-px bg-white/[0.06]" />
 
-        {/* + New dropdown */}
-        <div ref={addRef} className="relative">
+        {/* Shell dropdown — single entry point for "start new work".
+            - Click a shell: sets it as the default terminal and opens the
+              project browser (Level 1). Opening any project from there spawns
+              its first pane with the chosen shell.
+            - "Browse projects": jumps to L1 without changing the default.
+            In-place pane-adds at L2/L3 are handled by the sidebar and the
+            command palette (Ctrl+K). */}
+        <div ref={shellRef} className="relative">
           <button
-            onClick={() => {
-              setAddOpen(!addOpen);
-              setLayoutOpen(false);
-            }}
+            onClick={() => setShellOpen(!shellOpen)}
             className={cn(
               'flex h-10 items-center gap-1.5 px-2.5 text-[11px] font-medium',
               'text-zinc-500 transition-colors duration-150',
               'hover:text-zinc-300',
-              addOpen && 'text-zinc-300',
+              shellOpen && 'text-zinc-300',
             )}
+            title="Default shell — click to change and open the project browser"
+            aria-haspopup="menu"
+            aria-expanded={shellOpen}
           >
             <Plus size={12} strokeWidth={2} />
-            <span>New</span>
+            {defaultProfile && (
+              <>
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor: defaultProfile.color || '#6b7280',
+                  }}
+                />
+                <span className="max-w-[110px] truncate">
+                  {defaultProfile.name}
+                </span>
+              </>
+            )}
             <ChevronDown
               size={9}
               className={cn(
                 'text-zinc-600 transition-transform duration-150',
-                addOpen && 'rotate-180',
+                shellOpen && 'rotate-180',
               )}
             />
           </button>
 
           <AnimatePresence>
-            {addOpen && (
+            {shellOpen && (
               <motion.div
                 variants={dropdownVariants}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
-                className="glass-elevated absolute top-full left-0 z-50 mt-0.5 w-44 overflow-hidden rounded-lg py-1"
+                className="glass-elevated absolute top-full left-0 z-50 mt-0.5 w-56 overflow-hidden rounded-lg py-1"
               >
-                <SectionLabel>Terminal</SectionLabel>
-                {profiles.map((profile: TerminalProfile) => (
-                  <button
-                    key={profile.id}
-                    onClick={() => {
-                      addPane(profile.id, 'right');
-                      setAddOpen(false);
-                    }}
-                    className={cn(
-                      'flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-400',
-                      'transition-colors duration-100 hover:bg-white/[0.04] hover:text-zinc-200',
-                    )}
-                  >
-                    <span
-                      className="h-1.5 w-1.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: profile.color || '#6b7280' }}
-                    />
-                    <span className="font-medium">{profile.name}</span>
-                  </button>
-                ))}
-
+                <SectionLabel>Open project with</SectionLabel>
+                {profiles.map((profile: TerminalProfile) => {
+                  const isDefault = profile.id === defaultProfileId;
+                  return (
+                    <button
+                      key={profile.id}
+                      onClick={() => {
+                        setDefaultProfileId(profile.id);
+                        goToFolderBrowser();
+                        setShellOpen(false);
+                      }}
+                      className={cn(
+                        'flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px]',
+                        'transition-colors duration-100 hover:bg-white/[0.04] hover:text-zinc-200',
+                        isDefault ? 'text-zinc-200' : 'text-zinc-400',
+                      )}
+                      title={
+                        isDefault
+                          ? `${profile.name} — current default, go to projects`
+                          : `Set ${profile.name} as default and go to projects`
+                      }
+                    >
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: profile.color || '#6b7280' }}
+                      />
+                      <span className="font-medium">{profile.name}</span>
+                      {isDefault && (
+                        <Check
+                          size={11}
+                          strokeWidth={2.5}
+                          className="ml-auto text-zinc-400"
+                        />
+                      )}
+                    </button>
+                  );
+                })}
                 <Sep />
                 <button
                   onClick={() => {
-                    setShowProjectBrowser(true);
-                    setAddOpen(false);
+                    goToFolderBrowser();
+                    setShellOpen(false);
                   }}
                   className={cn(
                     'flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] text-zinc-400',
                     'transition-colors duration-100 hover:bg-white/[0.04] hover:text-zinc-200',
                   )}
+                  title="Go to the project browser without changing the default shell"
                 >
                   <FolderOpen
                     size={11}
                     className="text-zinc-600"
                     strokeWidth={1.5}
                   />
-                  <span className="font-medium">From Project...</span>
-                  <span className="ml-auto font-mono text-[9px] text-zinc-600">
-                    ^K
-                  </span>
+                  <span className="font-medium">Browse projects</span>
                 </button>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Layout dropdown — appears when panes exist */}
-        {hasPanes && (
+        {/* Unified Layouts button — single source of truth for dashboard
+            + worktree preset application. Replaces the old "Layout" dropdown
+            (Split Right/Below, Maximize, Clear All) whose actions are still
+            available via keyboard shortcuts and the command palette. */}
+        {showLayoutControl && (
           <>
             <div className="h-3.5 w-px bg-white/[0.06]" />
-            <div ref={layoutRef} className="relative">
-              <button
-                onClick={() => {
-                  setLayoutOpen(!layoutOpen);
-                  setAddOpen(false);
-                }}
-                className={cn(
-                  'flex h-10 items-center gap-1.5 px-2.5 text-[11px] font-medium',
-                  'text-zinc-500 transition-colors duration-150',
-                  'hover:text-zinc-300',
-                  layoutOpen && 'text-zinc-300',
-                )}
-              >
-                <LayoutGrid size={11} strokeWidth={1.5} />
-                <span>Layout</span>
-                <ChevronDown
-                  size={9}
-                  className={cn(
-                    'text-zinc-600 transition-transform duration-150',
-                    layoutOpen && 'rotate-180',
-                  )}
-                />
-              </button>
-
-              <AnimatePresence>
-                {layoutOpen && (
-                  <motion.div
-                    variants={dropdownVariants}
-                    initial="hidden"
-                    animate="visible"
-                    exit="exit"
-                    className="glass-elevated absolute top-full left-0 z-50 mt-0.5 w-52 overflow-hidden rounded-lg py-1"
-                  >
-                    <SectionLabel>Split</SectionLabel>
-                    <DropdownItem
-                      icon={<PanelRight size={12} />}
-                      label="Split Right"
-                      shortcut="^\u21E7D"
-                      onClick={() => {
-                        if (activePaneId) {
-                          const pane = panes.find(
-                            (p: Pane) => p.id === activePaneId,
-                          );
-                          if (pane) addPane(pane.profileId, 'right');
-                        }
-                        setLayoutOpen(false);
-                      }}
-                    />
-                    <DropdownItem
-                      icon={<PanelBottom size={12} />}
-                      label="Split Below"
-                      shortcut="^\u21E7E"
-                      onClick={() => {
-                        if (activePaneId) {
-                          const pane = panes.find(
-                            (p: Pane) => p.id === activePaneId,
-                          );
-                          if (pane) addPane(pane.profileId, 'below');
-                        }
-                        setLayoutOpen(false);
-                      }}
-                    />
-
-                    {/* Maximize/Restore */}
-                    <DropdownItem
-                      icon={
-                        maximizedPaneId ? (
-                          <Minimize2 size={12} />
-                        ) : (
-                          <Maximize2 size={12} />
-                        )
-                      }
-                      label={
-                        maximizedPaneId ? 'Restore Layout' : 'Maximize Pane'
-                      }
-                      shortcut="^\u21B5"
-                      onClick={() => {
-                        if (activePaneId) toggleMaximize(activePaneId);
-                        setLayoutOpen(false);
-                      }}
-                    />
-
-                    <Sep />
-
-                    {/* Clear All — destructive, at the bottom */}
-                    <button
-                      onClick={() => {
-                        if (confirmClear) {
-                          clearAllPanes();
-                          setConfirmClear(false);
-                          setLayoutOpen(false);
-                          if (confirmTimerRef.current)
-                            clearTimeout(confirmTimerRef.current);
-                        } else {
-                          setConfirmClear(true);
-                          confirmTimerRef.current = setTimeout(
-                            () => setConfirmClear(false),
-                            3000,
-                          );
-                        }
-                      }}
-                      className={cn(
-                        'flex w-full items-center gap-2 px-2.5 py-[6px] text-[11px]',
-                        'transition-colors duration-100',
-                        confirmClear
-                          ? 'bg-red-500/[0.08] text-red-400'
-                          : 'text-zinc-500 hover:bg-red-500/[0.06] hover:text-red-400',
-                      )}
-                    >
-                      <Trash2 size={12} className="shrink-0" />
-                      <span className="flex-1 font-medium">
-                        {confirmClear ? 'Confirm Clear All?' : 'Clear All'}
-                      </span>
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+            <div className="flex h-10 items-center px-2.5">
+              <LayoutControl level={currentLevel === 2 ? 2 : 3} align="start" />
             </div>
           </>
         )}
@@ -391,35 +298,4 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function Sep() {
   return <div className="mx-2 my-1 h-px bg-white/[0.04]" />;
-}
-
-function DropdownItem({
-  icon,
-  label,
-  shortcut,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  shortcut?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'flex w-full items-center gap-2 px-2.5 py-[6px] text-[11px]',
-        'text-zinc-300 hover:bg-white/[0.04] hover:text-zinc-100',
-        'transition-colors duration-100',
-      )}
-    >
-      <span className="shrink-0 text-zinc-500">{icon}</span>
-      <span className="flex-1 font-medium">{label}</span>
-      {shortcut && (
-        <span className="font-mono text-[9px] tracking-tight text-zinc-600">
-          {shortcut}
-        </span>
-      )}
-    </button>
-  );
 }
