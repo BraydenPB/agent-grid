@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-alpha.2] - 2026-04-13
+
+### Added
+
+- Settings gear icon in `DashboardTile` header (level 2) and `PaneTab` tab bar
+  (level 3) — both trigger the pane context menu on click
+- Smart right-click on terminal: copies selected text, pastes from clipboard,
+  or Shift+RMB to always show context menu
+
+### Changed
+
+- Removed non-rendering `rightHeaderActionsComponent` from Dockview; all
+  tab-bar actions now live in `defaultTabComponent` (`PaneTab`)
+
 ## [0.2.0-alpha.1] - 2026-04-12
 
 Opens the v0.2.0 pre-release cycle. Layout system is now unified across the
