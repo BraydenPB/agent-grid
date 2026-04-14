@@ -54,10 +54,22 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing keys for tauri-plugin-updater. Without these, builds succeed
+          # but produce no .sig files and the updater will reject the release.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: ${{ github.ref_name }}
           releaseBody: 'See [CHANGELOG.md](https://github.com/BraydenPB/agent-grid/blob/master/CHANGELOG.md) for details.'
-          releaseDraft: true
-          prerelease: true
+          # Must be a published, non-prerelease release for the /releases/latest/
+          # endpoint to resolve: GitHub excludes both drafts and prereleases from
+          # /latest/. The alpha/beta suffix in the version string conveys pre-GA
+          # status on its own. Flip prerelease back to true once you host
+          # latest.json somewhere that doesn't rely on /releases/latest/.
+          releaseDraft: false
+          prerelease: false
+          # NSIS is the modern Windows installer for Tauri v2; prefer it in latest.json
+          # over the legacy MSI when both are built.
+          updaterJsonPreferNsis: true
           args: --target ${{ matrix.target }}

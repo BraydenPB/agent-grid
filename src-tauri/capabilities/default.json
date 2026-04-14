@@ -13,6 +13,8 @@
     "opener:default",
     "os:default",
     "pty:default",
-    "dialog:default"
+    "dialog:default",
+    "updater:default",
+    "process:default"
   ]
 }
