@@ -462,7 +462,7 @@ export function TerminalPane({
     void navigator.clipboard
       .readText()
       .then((text) => {
-        entryRef.current?.pty?.write(text);
+        if (text) entryRef.current?.terminal.paste(text);
       })
       .catch(() => {});
   }, []);
@@ -477,7 +477,32 @@ export function TerminalPane({
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+
+    const terminalEl = containerRef.current;
+    const inTerminal = !!terminalEl && terminalEl.contains(e.target as Node);
+    const entry = entryRef.current;
+
+    // Shift+right-click, right-click outside the terminal viewport, or
+    // right-click before the PTY is attached → show the full menu.
+    if (e.shiftKey || !inTerminal || !entry) {
+      setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+      return;
+    }
+
+    // Smart copy/paste inside the terminal: selection → copy, else → paste.
+    const selection = entry.terminal.getSelection();
+    if (selection) {
+      void navigator.clipboard.writeText(selection).catch(() => {});
+      entry.terminal.clearSelection();
+    } else {
+      void navigator.clipboard
+        .readText()
+        .then((text) => {
+          if (text) entry.terminal.paste(text);
+        })
+        .catch(() => {});
+    }
+    entry.terminal.focus();
   }, []);
 
   /* ── Double-click header to maximize/restore ── */
@@ -709,6 +734,7 @@ export function TerminalPane({
     <div
       role="application"
       aria-label={`Terminal: ${activeProfile.name}`}
+      data-pane-root={paneId}
       className={cn(
         'group relative flex h-full flex-col overflow-hidden',
         isActive ? 'pane-active' : 'pane-inactive',

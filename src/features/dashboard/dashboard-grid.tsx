@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { X, GitBranch, Maximize2, FolderOpen } from 'lucide-react';
+import { X, GitBranch, Maximize2, FolderOpen, Settings } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useWorkspaceStore, getOpenProjects } from '@/store/workspace-store';
 import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
@@ -144,6 +144,30 @@ function DashboardTile({ project, mainPane }: DashboardTileProps) {
           </span>
         </div>
         <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!mainPane) return;
+              const el = document.querySelector<HTMLElement>(
+                `[data-pane-root="${mainPane.id}"]`,
+              );
+              if (!el) return;
+              const rect = el.getBoundingClientRect();
+              el.dispatchEvent(
+                new MouseEvent('contextmenu', {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: rect.right - 20,
+                  clientY: rect.top + 4,
+                  button: 2,
+                }),
+              );
+            }}
+            className="flex h-5 w-5 items-center justify-center rounded text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300"
+            title="Settings"
+          >
+            <Settings size={11} strokeWidth={1.75} />
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation();

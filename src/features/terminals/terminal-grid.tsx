@@ -4,8 +4,10 @@ import {
   type DockviewReadyEvent,
   type DockviewApi,
   type IDockviewPanelProps,
+  type IDockviewPanelHeaderProps,
 } from 'dockview';
 import { AnimatePresence } from 'framer-motion';
+import { X, Settings } from 'lucide-react';
 import 'dockview/dist/styles/dockview.css';
 import {
   useWorkspaceStore,
@@ -18,13 +20,177 @@ import {
   cleanupOrphanedEntries,
   destroyTerminalEntry,
 } from '@/lib/terminal-registry';
-import { usePaneStatusStore } from '@/store/pane-status-store';
+import { usePaneStatusStore, STATUS_COLORS } from '@/store/pane-status-store';
 import { saveLayout } from '@/lib/layout-storage';
 import { dockviewApiRef } from '@/lib/dockview-api';
 import type { Pane, TerminalProfile } from '@/types';
+import { cn } from '@/lib/utils';
 import { TerminalPane } from './terminal-pane';
 
 const EMPTY_PANES: Pane[] = [];
+
+/**
+ * Custom Dockview tab — shows profile color dot + status, name, cwd basename, close.
+ * Right-click opens the pane context menu. Double-click toggles maximize.
+ */
+function PaneTab(props: IDockviewPanelHeaderProps) {
+  const paneId = (props.params as { paneId?: string } | undefined)?.paneId;
+
+  const profile = useWorkspaceStore((s) => {
+    const wt = getActiveWorktree(s);
+    const pane = wt?.panes.find((p) => p.id === paneId);
+    if (!pane) return null;
+    return s.profiles.find((p) => p.id === pane.profileId) ?? null;
+  });
+  const pane = useWorkspaceStore((s) => {
+    const wt = getActiveWorktree(s);
+    return wt?.panes.find((p) => p.id === paneId) ?? null;
+  });
+  const toggleMaximize = useWorkspaceStore((s) => s.toggleMaximize);
+  const paneStatus = usePaneStatusStore((s) =>
+    paneId ? (s.statuses[paneId] ?? 'working') : 'working',
+  );
+  const [isActive, setIsActive] = useState(props.api.isActive);
+
+  useEffect(() => {
+    const d = props.api.onDidActiveChange((e) => setIsActive(e.isActive));
+    return () => d.dispose();
+  }, [props.api]);
+
+  const effectiveColor = pane?.colorOverride ?? profile?.color ?? '#6b7280';
+  const statusColor = STATUS_COLORS[paneStatus];
+  const name = profile?.name ?? props.api.title ?? 'Terminal';
+  const cwd = pane?.cwd ?? '';
+  const cwdLabel = cwd ? cwd.split(/[\\/]/).pop() || cwd : '';
+
+  const dispatchContextMenu = useCallback(
+    (x: number, y: number) => {
+      if (!paneId) return;
+      props.api.setActive();
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>(
+          `[data-pane-root="${paneId}"]`,
+        );
+        if (!el) return;
+        el.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+            button: 2,
+          }),
+        );
+      });
+    },
+    [paneId, props.api],
+  );
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!paneId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dispatchContextMenu(e.clientX, e.clientY);
+    },
+    [paneId, dispatchContextMenu],
+  );
+
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!paneId) return;
+      e.stopPropagation();
+      toggleMaximize(paneId);
+    },
+    [paneId, toggleMaximize],
+  );
+
+  const handleClose = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      props.api.close();
+    },
+    [props.api],
+  );
+
+  return (
+    <div
+      className={cn(
+        'group/tab flex h-full min-w-0 items-center gap-2 px-2.5 select-none',
+        'text-[11px] transition-colors duration-100',
+        isActive ? 'text-zinc-200' : 'text-zinc-500 hover:text-zinc-300',
+      )}
+      onContextMenu={handleContextMenu}
+      onDoubleClick={handleDoubleClick}
+      title={cwd || name}
+    >
+      {/* Profile color dot + status indicator */}
+      <span className="relative flex shrink-0 items-center justify-center">
+        <span
+          className="h-2 w-2 rounded-full transition-all duration-200"
+          style={{
+            backgroundColor: effectiveColor,
+            opacity: isActive ? 1 : 0.5,
+            boxShadow: isActive ? `0 0 6px ${effectiveColor}55` : 'none',
+          }}
+        />
+        {paneStatus !== 'working' && statusColor !== 'transparent' && (
+          <span
+            className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
+            style={{ backgroundColor: statusColor }}
+          />
+        )}
+      </span>
+
+      {/* Profile name */}
+      <span className="truncate font-medium">{name}</span>
+
+      {/* CWD breadcrumb (only if room & present) */}
+      {cwdLabel && (
+        <span
+          className={cn(
+            'truncate text-[10px]',
+            isActive ? 'text-zinc-500' : 'text-zinc-600',
+          )}
+        >
+          {cwdLabel}
+        </span>
+      )}
+
+      {/* Gear / settings */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          dispatchContextMenu(e.clientX, e.clientY);
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-zinc-300 transition-colors duration-100 hover:bg-white/[0.08] hover:text-white"
+        aria-label="Pane settings"
+        title="Settings"
+      >
+        <Settings size={11} strokeWidth={1.75} />
+      </button>
+
+      {/* Close */}
+      <button
+        type="button"
+        onClick={handleClose}
+        onMouseDown={(e) => e.stopPropagation()}
+        className={cn(
+          'flex h-4 w-4 shrink-0 items-center justify-center rounded',
+          'text-zinc-600 transition-colors duration-100',
+          'hover:bg-red-500/[0.12] hover:text-red-400',
+          isActive ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100',
+        )}
+        aria-label="Close tab"
+        title="Close"
+      >
+        <X size={10} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
 
 const FALLBACK_PROFILE: TerminalProfile = {
   id: 'system-shell',
@@ -60,6 +226,7 @@ function TerminalPaneWrapper({
       isActive={isActive}
       onFocus={() => setActivePaneId(paneId)}
       onClose={onClose}
+      hideHeader
     />
   );
 }
@@ -450,6 +617,7 @@ export function TerminalGrid() {
       <DockviewReact
         className="dockview-theme-abyss flex-1"
         components={components}
+        defaultTabComponent={PaneTab}
         onReady={handleReady}
         disableFloatingGroups
       />

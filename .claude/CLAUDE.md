@@ -41,6 +41,16 @@ src-tauri/
   capabilities/   — Tauri permissions (default.json)
 ```
 
+## Navigation Levels
+
+The app has three `currentLevel` states (workspace store):
+
+- **Level 1** — `FolderBrowser`: browse filesystem for projects
+- **Level 2** — `DashboardGrid`: project tiles, each with a `DashboardTile` header (project name + action buttons) and an embedded `TerminalPane`
+- **Level 3** — `TerminalGrid`: full Dockview with `PaneTab` tabs and `TerminalPane` panes
+
+**Any UI added to a "pane header" must be added to BOTH `DashboardTile` header (level 2, `dashboard-grid.tsx`) AND `PaneTab` (level 3, `terminal-grid.tsx`).** These are different components at different nav levels.
+
 ## Key Patterns
 
 - PTY spawned via `tauri-pty` JS API: `spawn(command, args, { cols, rows })`
@@ -50,6 +60,7 @@ src-tauri/
 - All state in Zustand — workspace, panes, profiles, active pane
 - Profiles define CLI commands (claude, codex, gemini, aider, opencode, shell)
 - Grid presets define layout templates (Single, 2x2, 3-col, etc.)
+- Context menu on a pane is triggered by dispatching to its root element: `document.querySelector('[data-pane-root="${paneId}"]').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX, clientY, button: 2 }))`
 
 ## Conventions
 
@@ -75,3 +86,4 @@ cargo check          # Rust check (run from src-tauri/)
 - Platform detection via `@tauri-apps/plugin-os` → `platform()`
 - Windows shell: `powershell.exe`, macOS/Linux: `$SHELL` or `/bin/bash`
 - Icons are placeholders — replace with real branding later
+- Dockview `rightHeaderActionsComponent` does **not** render (confirmed broken in v5.2.0 with this setup) — use `defaultTabComponent` (`PaneTab`) for all tab-bar action buttons instead
