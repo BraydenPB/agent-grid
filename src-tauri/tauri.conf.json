@@ -42,7 +42,7 @@
       "endpoints": [
         "https://github.com/BraydenPB/agent-grid/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_YOUR_PUBLIC_KEY_FROM_TAURI_SIGNER_GENERATE"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE2QjI4QTQ2MDY2RkUxNDkKUldSSjRXOEdSb3F5cGs3NWYxU01BT2R1NjJDTHdZZGwzb2NVRG9wQm00NXBVY2VYeFd2NDhIdnQK"
     }
   }
 }
