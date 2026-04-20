@@ -9,6 +9,7 @@ import { FolderBrowser } from '@/features/projects/folder-browser';
 import { DashboardGrid } from '@/features/dashboard/dashboard-grid';
 import { CommandPalette } from '@/features/command-palette/command-palette';
 import { WorktreeDialog } from '@/features/worktrees/worktree-dialog';
+import { UpdateBanner } from '@/features/updater/update-banner';
 import { useGlobalShortcuts } from '@/lib/use-global-shortcuts';
 import { useWorkspaceStore } from '@/store/workspace-store';
 
@@ -54,6 +55,7 @@ export function App() {
             )}
           </AnimatePresence>
         </main>
+        <UpdateBanner />
       </div>
     </ErrorBoundary>
   );
