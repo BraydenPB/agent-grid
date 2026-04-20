@@ -1,6 +1,6 @@
 {
   "name": "agent-grid",
-  "version": "0.2.0-alpha.2",
+  "version": "0.2.0-alpha.3",
   "description": "A fast, cross-platform open-source desktop app for running AI coding terminals in parallel",
   "private": true,
   "type": "module",

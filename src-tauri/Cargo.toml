@@ -1,6 +1,6 @@
 [package]
 name = "agent-grid"
-version = "0.2.0-alpha.2"
+version = "0.2.0-alpha.3"
 description = "A fast, cross-platform desktop app for parallel AI coding terminals"
 authors = ["Agent Grid Contributors"]
 edition = "2021"
